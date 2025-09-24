@@ -1,0 +1,46 @@
+[project]
+name = "cpdx"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "matt", email = "mb46@princeton.edu" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "jax>=0.7.0",
+    "jax-tqdm>=0.4.0",
+    "jaxtyping>=0.3.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+cuda = [
+    "jax[cuda12]>=0.7.0",
+]
+dev = [
+    "black>=25.1.0",
+    "flake8>=7.3.0",
+    "flake8-bugbear>=24.12.12",
+    "ipympl>=0.9.7",
+    "isort>=6.0.1",
+    "jupyterlab>=4.4.5",
+    "matplotlib>=3.10.5",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.16",
+    "mkdocstrings-python>=1.16.12",
+    "pre-commit>=4.2.0",
+    "pre-commit-hooks>=5.0.0",
+    "pycpd>=2.0.0",
+    "pyupgrade>=3.20.0",
+    "rich>=14.1.0",
+    "typeguard>=4.4.4",
+]
+
+[tool.isort]
+profile = "black"
+force_single_line = true
+lines_after_imports = 2
