@@ -46,7 +46,25 @@ def decompose_affine_transform(
     S = shears[jnp.triu(jnp.ones((n, n)), 1).astype(bool)]
     R = jnp.dot(A, jnp.linalg.inv(ZS))
     if jnp.linalg.det(R) < 0:
-        Z[0] *= -1
-        ZS[0] *= -1
+        Z = Z.at[0].multiply(-1)
+        ZS = ZS.at[0].multiply(-1)
         R = jnp.dot(A, jnp.linalg.inv(ZS))
     return R, Z, S
+
+
+def z_score(
+    x: Float[Array, "n d"],
+) -> tuple[Float[Array, "n d"], tuple[Float[Array, "d d"], Float[Array, " d"]]]:
+    mu = jnp.mean(x[:, [0, 1]], axis=0, keepdims=True)
+    sd = jnp.std(x, axis=0, keepdims=True)
+    S = jnp.diag(sd[0])
+    t = mu
+    return (x - mu) / sd, (S, t)
+
+
+def undo_z_score(
+    x: Float[Array, "n d"],
+    S: Float[Array, "d d"],
+    t: Float[Array, " d"],
+) -> Float[Array, "n d"]:
+    return S @ x.T - t

@@ -1,3 +1,12 @@
+"""Coherent point drift and related point cloud matching algorithms.
+
+References
+---
+[1] A. Myronenko, X. Song, and M. Á. Carreira-Perpiñán, “Non-rigid point set registration: Coherent point drift,” in Proc. Int. Conf. Neural Inf. Process. Syst., 2006, pp. 1009–1016.
+
+[2] A. Myronenko and X. Song, “Point set registration: Coherent point drift,” IEEE Trans. Pattern Anal. Mach. Intell., vol. 32, no. 12, pp. 2262–2275, Dec. 2010.
+"""
+
 from typing import Union
 
 from jaxtyping import Array
@@ -21,6 +30,9 @@ type TransformParams = Union[
 
 __all__ = [
     "align",
+    "align_rigid",
+    "align_affine",
+    "align_deformable",
 ]
 
 
