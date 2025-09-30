@@ -17,6 +17,7 @@ __all__ = [
     "align_fixed_iter",
     "transform",
     "maximization",
+    "interpolate",
 ]
 
 
@@ -167,3 +168,36 @@ def update_variance(
     )
     new = jnp.divide(val, N * d)
     return jax.lax.select(new > 0, new, tolerance - 2 * jnp.finfo(x.dtype).eps)
+
+
+def interpolate(
+    mov: Float[Array, "m d"],
+    interp: Float[Array, "n d"],
+    resid: Float[Array, "m d"],
+    P: Float[Array, "m n"],
+    G_mm: Float[Array, "m m"],
+    regularization_param: float,
+    kernel_stddev: float,
+    var: float,
+) -> Float[Array, "n d"]:
+    """Interpolate values of vector field at points outside of the original fit domain using a "Gaussian process"-like interpretation of the fitted model.
+
+    Args:
+        mov (Float[Array, "m d"]): "moving" point cloud that was aligned
+        interp (Float[Array, "n d"]): points to interpolate
+        resid (Float[Array, "m d"]): alignment residual vectors
+        P (Float[Array, "m n"]): matching matrix
+        G_mm (Float[Array, "m m"]): gram matrix from moving points
+        regularization_param (float): regularization parameter
+        kernel_stddev (float): standard deviation of kernel
+        var (float): final variance of alignment
+
+    Returns:
+        Float[Array, "n d"]: interpolated vector values at specified points
+    """
+    # calculate kernel matrix b/t moving & interpolating points
+    G_im = jnp.exp(
+        jnp.negative(jnp.divide(sqdist(interp, mov), 2 * kernel_stddev**2))
+    )
+    I_reg = jnp.diag(1.0 / jnp.sum(P, axis=1)) * (var * regularization_param)
+    return G_im @ jnp.linalg.inv(G_mm + I_reg) @ resid
