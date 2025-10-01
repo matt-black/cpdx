@@ -18,6 +18,17 @@ def affinity_matrix(
     kernel: KernelFunction,
     beta: float | Float[Array, ""],
 ) -> KernelMatrix:
+    """Calculate the affinity matrix between pairs of points in the two points clouds, `x` and `y`.
+
+    Args:
+        x (Float[Array, "n d"]): reference point cloud
+        y (Float[Array, "m d"]): moving point cloud
+        kernel (KernelFunction): kernel function
+        beta (float | Float[Array, ""]): shape parameter of kernel
+
+    Returns:
+        KernelMatrix
+    """
     return jax.vmap(lambda y1: jax.vmap(lambda x1: kernel(x1, y1, beta))(x))(y)
 
 
@@ -30,10 +41,25 @@ def initialize(
     gamma: float,
 ) -> tuple[
     KernelMatrix,
-    Float[Array, " m"],
-    Float[Array, " m"],
-    Float[Array, ""],
+    Float[Array, " m"],  # alpha_m (mixing coefficients)
+    Float[Array, " m"],  # sigma_m
+    Float[Array, ""],  # initial variance
 ]:
+    """Compute gram matrix for moving points and determine initial parameters for the BCPD algorithm. Uses the method described in section 4.3.5 of [1].
+
+    Args:
+        x (Float[Array, "n d"]): reference point cloud
+        y (Float[Array, "m d"]): moving point cloud
+        kernel (KernelFunction): kernel function
+        beta (float): shape parameter of kernel
+        gamma (float): scalar to scale initial variance estimate by
+
+    Returns:
+        tuple[KernelMatrix, Float[Array, " m"], Float[Array, " m"], Float[Array, ""]]
+
+    References:
+        [1] O. Hirose, "A Bayesian Formulation of Coherent Point Drift," in IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 43, no. 7, pp. 2269-2286, 1 July 2021, doi: 10.1109/TPAMI.2020.2971687.
+    """
     m, _ = y.shape
     d_t = sqdist(x, y).T
     alpha_m = jnp.ones((m,)) / m
@@ -49,6 +75,17 @@ def apply_T(
     s: ScalingTerm,
     t: Float[Array, " d"],
 ) -> Float[Array, "n d"]:
+    """Apply rigid transform to points.
+
+    Args:
+        x (Float[Array, "n d"]): points to transform.
+        R (RotationMatrix): `d`-dimensional rotation matrix
+        s (ScalingTerm): scalar, isotropic scaling term
+        t (Translation): translation
+
+    Returns:
+        Float[Array, "n d"]: transformed points
+    """
     return (R.T @ x.T).T * s + t
 
 
@@ -58,8 +95,27 @@ def apply_Tinv(
     s: ScalingTerm,
     t: Translation,
 ) -> Float[Array, "n d"]:
+    """Apply inverse of specified rigid transform to points.
+
+    Args:
+        x (Float[Array, "n d"]): points to transform.
+        R (RotationMatrix): `d`-dimensional rotation matrix
+        s (ScalingTerm): scalar, isotropic scaling term
+        t (Translation): translation
+
+    Returns:
+        Float[Array, "n d"]: transformed points
+    """
     return apply_T(x - t[None, :], R, 1 / s, jnp.array(0.0))
 
 
 def dimension_bounds(x: Float[Array, " n"]) -> Float[Array, " 2"]:
+    """Get min and max values for bounding box of point cloud along some dimension.
+
+    Args:
+        x (Float[Array, " n"]): all coordinate values in some dimension
+
+    Returns:
+        Float[Array, " 2"]: [min, max] coordinate in dimension
+    """
     return jnp.asarray([jnp.amin(x), jnp.amax(x)])
