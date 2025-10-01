@@ -39,6 +39,18 @@ def align(
     tuple[MatchingMatrix, RotationMatrix, ScalingTerm, Translation],
     tuple[Float[Array, ""], int],
 ]:
+    """Align the moving points onto the reference points by rigid transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        max_iter (int): maximum # of iterations to optimize for.
+        tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
+
+    Returns:
+        tuple[TransformParams, tuple[Float[Array, ""], int]]: the fitted transform parameters (a rotation matrix, scaling term, and translation) along with the final variance and the number of iterations that the algorithm was run for.
+    """
     n, d = ref.shape
     m, _ = mov.shape
     var_i = (jnp.sum(sqdist(ref, mov)) / (m * n * d)).item()
@@ -92,7 +104,17 @@ def align_fixed_iter(
     tuple[MatchingMatrix, RotationMatrix, ScalingTerm, Translation],
     Float[Array, " {num_iter}"],
 ]:
+    """Align the moving points onto the reference points by rigid transform.
 
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        num_iter (int): # of iterations to optimize for.
+
+    Returns:
+        tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (a rotation matrix, scaling term, and translation) along with the variance at each step of the optimization.
+    """
     # initialize variance
     n, d = ref.shape
     m, _ = mov.shape
@@ -140,6 +162,17 @@ def transform(
     s: ScalingTerm,
     t: Translation,
 ) -> Float[Array, "m d"]:
+    """Transform the input points by rigid transformation.
+
+    Args:
+        y (Float[Array, "m d"]): `d`-dimensional points to be transformed
+        R (RotationMatrix): `d`-dimensional rotation matrix
+        s (ScalingTerm): scalar, isotropic scaling term
+        t (Translation): translation
+
+    Returns:
+        Float[Array, "m d"]: transformed points, `s * (y @ R.T) + t`
+    """
     return s * (y @ R.T) + t
 
 
@@ -149,6 +182,17 @@ def maximization(
     P: Float[Array, "m n"],
     tolerance: float,
 ) -> tuple[tuple[RotationMatrix, ScalingTerm, Translation], Float[Array, ""]]:
+    """Do a single M-step.
+
+    Args:
+        x (Float[Array, "n d"]): target point set
+        y (Float[Array, "m d"]): source point set
+        P (MatchingMatrix): matching matrix
+        tolerance (float): termination tolerance
+
+    Returns:
+        tuple[tuple[RotationMatrix, ScalingTerm, Translation], Float[Array, ""]]: updated transform parameters, and variance.
+    """
     _, d = x.shape
     N = jnp.sum(P)
     Pt1, P1 = jnp.sum(P, axis=0), jnp.sum(P, axis=1)

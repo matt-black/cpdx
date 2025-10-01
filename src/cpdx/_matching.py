@@ -16,7 +16,18 @@ def expectation(
     y_t: Float[Array, "m d"],
     var: Float[Array, ""],
     w: float,
-) -> Float[Array, "m n"]:
+) -> MatchingMatrix:
+    """Do a single expectation step of the CPD algorithm. This essentially just updates the matching matrix.
+
+    Args:
+        x (Float[Array, "n d"]): target point set
+        y (Float[Array, "m d"]): source (moving) point set
+        var (Float[Array, ""]): variance of the Gaussian kernel
+        w (float): outlier probability
+
+    Returns:
+        MatchingMatrix: (m x n) matrix of matching probabilities.
+    """
     n, d = x.shape
     m, _ = y_t.shape
     d_t = sqdist(x, y_t).transpose()

@@ -22,7 +22,7 @@ __all__ = [
 
 type AffineMatrix = Float[Array, "d d"]
 type Translation = Float[Array, " d"]
-type TransformParams = tuple[AffineMatrix, Translation]
+type TransformParams = tuple[MatchingMatrix, AffineMatrix, Translation]
 
 
 def align(
@@ -31,7 +31,19 @@ def align(
     outlier_prob: float,
     max_iter: int,
     tolerance: float,
-):
+) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
+    """Align the moving points onto the reference points by affine transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        max_iter (int): maximum # of iterations to optimize for.
+        tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
+
+    Returns:
+        tuple[TransformParams, tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the final variance and the number of iterations that the algorithm was run for.
+    """
     # initialize variance
     n, d = ref.shape
     m, _ = mov.shape
@@ -75,10 +87,18 @@ def align_fixed_iter(
     mov: Float[Array, "m d"],
     outlier_prob: float,
     num_iter: int,
-) -> tuple[
-    tuple[MatchingMatrix, AffineMatrix, Translation],
-    Float[Array, " {num_iter}"],
-]:
+) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
+    """Align the moving points onto the reference points by affine transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        num_iter (int): # of iterations to optimize for.
+
+    Returns:
+        tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the variance at each step of the optimization.
+    """
     # initialize variance
     n, d = ref.shape
     m, _ = mov.shape
@@ -110,15 +130,36 @@ def align_fixed_iter(
 def transform(
     y: Float[Array, "m d"], A: Float[Array, "d d"], t: Float[Array, " d"]
 ) -> Float[Array, "m d"]:
+    """Transform the input points by affine transform.
+
+    Args:
+        y (Float[Array, "m d"]): `d`-dimensional points to be transformed
+        A (Float[Array, "d d"]): `d`-dimensional affine transform matrix
+        t (Float[Array, " d"]): translation
+
+    Returns:
+        Float[Array, "m d"]: transformed points, `y @ A + t`
+    """
     return y @ A + t[None, :]
 
 
 def maximization(
     x: Float[Array, "n d"],
     y: Float[Array, "m d"],
-    P: Float[Array, "m n"],
+    P: MatchingMatrix,
     tolerance: float,
-) -> tuple[tuple[Float[Array, "d d"], Float[Array, " d"]], Float[Array, ""]]:
+) -> tuple[tuple[AffineMatrix, Translation], Float[Array, ""]]:
+    """Do a single M-step.
+
+    Args:
+        x (Float[Array, "n d"]): target point set
+        y (Float[Array, "m d"]): source point set
+        P (MatchingMatrix): matching matrix
+        tolerance (float): termination tolerance
+
+    Returns:
+        tuple[tuple[AffineMatrix, Translation], Float[Array, ""]]: updated transform parameters, and variance.
+    """
     A, t = update_transform(x, y, P)
     y_t = transform(y, A, t)
     var = update_variance(x, y_t, P, tolerance)

@@ -16,7 +16,6 @@ __all__ = [
     "align",
     "align_fixed_iter",
     "transform",
-    "maximization",
     "interpolate",
 ]
 
@@ -35,6 +34,20 @@ def align(
     max_iter: int,
     tolerance: float,
 ) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
+    """Align the moving points onto the reference points by a deformable transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        kernel_stddev (float): standard deviation of Gaussian kernel function.
+        max_iter (int): maximum # of iterations to optimize for.
+        tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
+
+    Returns:
+        tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (the matching matrix and the kernel and coefficient matrices) along with the final variance and the number of iterations that the algorithm was run for.
+    """
     # initialize variance
     n, d = ref.shape
     m, _ = mov.shape
@@ -85,6 +98,19 @@ def align_fixed_iter(
     kernel_stddev: float,
     num_iter: int,
 ) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
+    """Align the moving points onto the reference points by a deformable transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        kernel_stddev (float): standard deviation of Gaussian kernel function.
+        num_iter (int): # of iterations to optimize for.
+
+    Returns:
+        tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (the matching matrix and the kernel and coefficient matrices) along with the variance at each step of the optimization.
+    """
     n, d = ref.shape
     m, _ = mov.shape
     # compute gaussian kernel
@@ -123,6 +149,21 @@ def maximization(
     regularization_param: float,
     tolerance: float,
 ) -> tuple[CoeffMatrix, Float[Array, ""]]:
+    """Do a single M-step.
+
+    Args:
+        x (Float[Array, "n d"]): target point set
+        y (Float[Array, "m d"]): source point set
+        P (MatchingMatrix): matching matrix
+        G (KernelMatrix): matrix of kernel values between points in the source point set
+        var (Float[Array, ""]): current variance
+        regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        tolerance (float): termination tolerance
+
+    Returns:
+        tuple[tuple[AffineMatrix, Translation], Float[Array, ""]]:
+    """
+
     W = update_transform(x, y, P, G, var, regularization_param)
     y_t = transform(y, G, W)
     new_var = update_variance(x, y_t, P, tolerance)
@@ -134,6 +175,16 @@ def transform(
     G: KernelMatrix,
     W: CoeffMatrix,
 ) -> Float[Array, "m d"]:
+    """Transform the input points by deformable warping.
+
+    Args:
+        y (Float[Array, "m d"]): `d`-dimensional points to be transformed
+        G (KernelMatrix): matrix of kernel values between points (should be m x m)
+        W (CoeffMatrix): fitted coefficient matrix (should be same shape as `y`)
+
+    Returns:
+        Float[Array, "m d"]: warped points, `y + G @ W`
+    """
     return jnp.add(y, G @ W)
 
 
@@ -180,7 +231,9 @@ def interpolate(
     kernel_stddev: float,
     var: float,
 ) -> Float[Array, "n d"]:
-    """Interpolate values of vector field at points outside of the original fit domain using a "Gaussian process"-like interpretation of the fitted model.
+    """Interpolate values of vector field at points outside of the original fit domain.
+
+    This predicts the interpolated points by: `y = G_im @ (G_mm+I_reg)^(-1) @ resid` where G_im is the Gram matrix measuring kernel values between all pairs of points in `interp` and `mov`.
 
     Args:
         mov (Float[Array, "m d"]): "moving" point cloud that was aligned

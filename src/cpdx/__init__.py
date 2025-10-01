@@ -34,8 +34,24 @@ def align(
     regularization_param_deformable: float = 1.0,
     kernel_stddev_deformable: float = 1.0,
 ) -> tuple[
-    TransformParams, Union[Float[Array, " d"], tuple[Float[Array, ""], int]]
+    TransformParams,
+    Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
 ]:
+    """Align the moving points onto the reference points by the specified transform method.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        method (str): the transform that is to be fit/used to register the two sets of points.
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        num_iter (int): maximum # of iterations to optimize for. if tolerance is `None`, this is the number of iterations that will be optimized for.
+        tolerance (float): tolerance for matching variance, below which the algorithm will terminate. If `None`, a fixed number of iterations is used.
+        regularization_param_deformable (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        kernel_stddev_deformable (float): standard deviation of Gaussian kernel function. only used if `method=deformable`.
+
+    Returns:
+        tuple[TransformParams, tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the final variance and the number of iterations that the algorithm was run for.
+    """
     if method == "deformable":
         if tolerance is None:
             return align_fixed_iter_deformable(
