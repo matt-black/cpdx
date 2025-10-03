@@ -8,7 +8,7 @@ from jaxtyping import Float
 
 
 type KernelFunction = Callable[
-    [Float[Array, "1 d"], Float[Array, "1 d"], float | Float[Array, ""]],
+    [Float[Array, "1 d"], Float[Array, "1 d"], float],
     Float[Array, ""],
 ]
 

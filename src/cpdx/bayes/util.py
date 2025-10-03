@@ -16,7 +16,7 @@ def affinity_matrix(
     x: Float[Array, "n d"],
     y: Float[Array, "m d"],
     kernel: KernelFunction,
-    beta: float | Float[Array, ""],
+    beta: float,
 ) -> KernelMatrix:
     """Calculate the affinity matrix between pairs of points in the two points clouds, `x` and `y`.
 
@@ -119,3 +119,33 @@ def dimension_bounds(x: Float[Array, " n"]) -> Float[Array, " 2"]:
         Float[Array, " 2"]: [min, max] coordinate in dimension
     """
     return jnp.asarray([jnp.amin(x), jnp.amax(x)])
+
+
+def residual(
+    ref: Float[Array, "n d"],
+    mov: Float[Array, "m d"],
+    R: RotationMatrix,
+    s: ScalingTerm,
+    t: Translation,
+) -> Float[Array, "m d"]:
+    return apply_Tinv(ref, R, s, t) - mov
+
+
+@Partial(jax.jit, static_argnums=(5, 6, 7, 8, 9, 10))
+def interpolate(
+    mov: Float[Array, "m d"],
+    interp: Float[Array, "i d"],
+    resid: Float[Array, "m d"],
+    P: Float[Array, "n m"],
+    G_mm: Float[Array, "m m"],
+    kernel: KernelFunction,
+    beta: float,
+    s: float,
+    lambda_: float,
+    var: float,
+    eps: float = 1e-12,
+) -> Float[Array, "i d"]:
+    nu = jnp.clip(jnp.sum(P, axis=1), eps)
+    psi = (lambda_ * var / s**2) * jnp.diag(1.0 / nu)
+    G = affinity_matrix(interp, mov, kernel, beta)
+    return G @ jnp.linalg.inv(G_mm + psi) @ resid

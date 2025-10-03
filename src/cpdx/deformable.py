@@ -224,33 +224,25 @@ def update_variance(
 def interpolate(
     mov: Float[Array, "m d"],
     interp: Float[Array, "n d"],
-    resid: Float[Array, "m d"],
-    P: Float[Array, "m n"],
-    G_mm: Float[Array, "m m"],
-    regularization_param: float,
+    W: Float[Array, "m d"],
     kernel_stddev: float,
-    var: float,
 ) -> Float[Array, "n d"]:
     """Interpolate values of vector field at points outside of the original fit domain.
-
-    This predicts the interpolated points by: `y = G_im @ (G_mm+I_reg)^(-1) @ resid` where G_im is the Gram matrix measuring kernel values between all pairs of points in `interp` and `mov`.
 
     Args:
         mov (Float[Array, "m d"]): "moving" point cloud that was aligned
         interp (Float[Array, "n d"]): points to interpolate
-        resid (Float[Array, "m d"]): alignment residual vectors
-        P (Float[Array, "m n"]): matching matrix
-        G_mm (Float[Array, "m m"]): gram matrix from moving points
-        regularization_param (float): regularization parameter
+        W (Float[Array, "m d"]): fitted transform coefficients
         kernel_stddev (float): standard deviation of kernel
-        var (float): final variance of alignment
 
     Returns:
         Float[Array, "n d"]: interpolated vector values at specified points
+
+    Notes:
+        This assumes a "Gaussian process-like" interpretation of the fitting coefficients whereby the deformation field can be interpolated by computing a Gram matrix between the interpolated points and the moving points used during fitting, then the fitted weights are used to calculate deformation vectors at the interpolation coordinates.
     """
     # calculate kernel matrix b/t moving & interpolating points
     G_im = jnp.exp(
         jnp.negative(jnp.divide(sqdist(interp, mov), 2 * kernel_stddev**2))
     )
-    I_reg = jnp.diag(1.0 / jnp.sum(P, axis=1)) * (var * regularization_param)
-    return G_im @ jnp.linalg.inv(G_mm + I_reg) @ resid
+    return G_im @ W
