@@ -4,6 +4,7 @@ from jax.tree_util import Partial
 from jaxtyping import Array
 from jaxtyping import Float
 
+from .._matching import MatchingMatrix
 from ..deformable import KernelMatrix
 from ..rigid import RotationMatrix
 from ..rigid import ScalingTerm
@@ -124,11 +125,15 @@ def dimension_bounds(x: Float[Array, " n"]) -> Float[Array, " 2"]:
 def residual(
     ref: Float[Array, "n d"],
     mov: Float[Array, "m d"],
+    P: MatchingMatrix,
     R: RotationMatrix,
     s: ScalingTerm,
     t: Translation,
+    eps: float = 1e-12,
 ) -> Float[Array, "m d"]:
-    return apply_Tinv(ref, R, s, t) - mov
+    nu = jnp.clip(jnp.sum(P, axis=1), eps)
+    ref_hat = jnp.diag(jnp.divide(1.0, nu)) @ P @ ref
+    return apply_Tinv(ref_hat, R, s, t) - mov
 
 
 @Partial(jax.jit, static_argnums=(5, 6, 7, 8, 9, 10))
