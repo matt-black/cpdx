@@ -51,7 +51,7 @@ def align(
     # initialize variance
     n, d = ref.shape
     m, _ = mov.shape
-    var_i = (jnp.sum(sqdist(ref, mov)) / (m * n * d)).item()
+    var_i = jnp.sum(sqdist(ref, mov)) / (m * n * d)
 
     # compute gaussian kernel matrix
     G = jnp.exp(
