@@ -29,6 +29,7 @@ from .util import initialize
 
 __all__ = [
     "align",
+    "align_with_ic",
     "TransformParams",
     "VectorField",
 ]
