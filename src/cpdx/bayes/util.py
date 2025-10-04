@@ -39,7 +39,9 @@ def affinity_matrix(
     Returns:
         KernelMatrix
     """
-    return jax.vmap(lambda y1: jax.vmap(lambda x1: kernel(x1, y1, beta))(x))(y)
+    return jax.vmap(
+        lambda x1: jax.vmap(lambda y1: kernel(x1, y1, beta))(y)
+    )(x)
 
 
 def initialize(
