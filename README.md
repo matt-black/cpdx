@@ -1,4 +1,4 @@
 cpdx
 ===
 
-Coherent point drift, and related algorithms, in jax.
+Point cloud registration with coherent point drift.

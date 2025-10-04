@@ -17,6 +17,7 @@ __all__ = [
     "align_fixed_iter",
     "transform",
     "interpolate",
+    "maximization",
 ]
 
 

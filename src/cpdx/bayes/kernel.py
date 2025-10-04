@@ -7,6 +7,14 @@ from jaxtyping import Array
 from jaxtyping import Float
 
 
+__all__ = [
+    "KernelFunction",
+    "gaussian_kernel",
+    "inverse_multiquadratic_kernel",
+    "rational_quadratic_kernel",
+]
+
+
 type KernelFunction = Callable[
     [Float[Array, "1 d"], Float[Array, "1 d"], float],
     Float[Array, ""],

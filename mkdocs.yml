@@ -1,0 +1,18 @@
+site_name: cpdx
+
+theme:
+  name: "material"
+  locale: en
+  docs_dir: documentation
+  include_sidebar: True
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      locale: en
+      handlers:
+          python:
+              options:
+                  show_source: false
+              paths: [src]

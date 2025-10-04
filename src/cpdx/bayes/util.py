@@ -13,6 +13,16 @@ from ..util import sqdist
 from .kernel import KernelFunction
 
 
+__all__ = [
+    "affinity_matrix",
+    "initialize",
+    "apply_T",
+    "apply_Tinv",
+    "residual",
+    "interpolate",
+]
+
+
 def affinity_matrix(
     x: Float[Array, "n d"],
     y: Float[Array, "m d"],

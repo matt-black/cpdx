@@ -23,13 +23,16 @@ from ._private import update_matching
 from ._private import update_rigid
 from ._private import update_variance
 from .kernel import KernelFunction
-from .util import apply_T
+from .util import apply_T as transform
 from .util import initialize
+from .util import interpolate
 
 
 __all__ = [
     "align",
     "align_with_ic",
+    "transform",
+    "interpolate",
     "TransformParams",
     "VectorField",
 ]
@@ -271,7 +274,7 @@ def _align_tolerance(
         )
         R, s, t, var_bar = update_rigid(y, x_hat, u_hat, sigma_m, nu, n_hat)
         # remap points using updated transform
-        y_hat = apply_T(y + v_hat, R, s, t)
+        y_hat = transform(y + v_hat, R, s, t)
         # update variance to track how well the point clouds match
         var = update_variance(x, y_hat, P, s, nu, nu_prime, n_hat, var_bar)
         return P, R, s, t, sigma_m, alpha_m, v_hat, y_hat, var, iter_num + 1
@@ -341,7 +344,7 @@ def _align_fixed_iter(
             lambda_,
         )
         R, s, t, var_bar = update_rigid(y, x_hat, u_hat, sigma_m, nu, n_hat)
-        y_hat = apply_T(y + v_hat, R, s, t)
+        y_hat = transform(y + v_hat, R, s, t)
         var = update_variance(x, y_hat, P, s, nu, nu_prime, n_hat, var_bar)
         return (P, R, s, t, sigma_m, alpha_m, v_hat, y_hat, var), var
 

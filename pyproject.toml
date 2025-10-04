@@ -1,7 +1,7 @@
 [project]
 name = "cpdx"
 version = "0.1.0"
-description = "Add your description here"
+description = "Point cloud registration with coherent point drift."
 readme = "README.md"
 authors = [
     { name = "matt", email = "mb46@princeton.edu" }
@@ -9,7 +9,6 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "jax>=0.7.0",
-    "jax-tqdm>=0.4.0",
     "jaxtyping>=0.3.2",
 ]
 
