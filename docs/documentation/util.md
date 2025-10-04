@@ -1,3 +1,0 @@
-# Utilities
-
-Utility functions.

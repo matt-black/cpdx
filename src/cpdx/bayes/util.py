@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from jax.tree_util import Partial
 from jaxtyping import Array
 from jaxtyping import Float
 
@@ -43,7 +42,6 @@ def affinity_matrix(
     return jax.vmap(lambda y1: jax.vmap(lambda x1: kernel(x1, y1, beta))(x))(y)
 
 
-@Partial(jax.jit, static_argnums=(2, 3, 4))
 def initialize(
     x: Float[Array, "n d"],
     y: Float[Array, "m d"],
@@ -96,6 +94,9 @@ def apply_T(
 
     Returns:
         Float[Array, "n d"]: transformed points
+
+    Notes:
+        To apply the full BCPD transform, add the `VectorField` output to the points to transform before passing them into this function.
     """
     return (R.T @ x.T).T * s + t
 
@@ -146,7 +147,6 @@ def residual(
     return apply_Tinv(ref_hat, R, s, t) - mov
 
 
-@Partial(jax.jit, static_argnums=(5, 6, 7, 8, 9, 10))
 def interpolate(
     mov: Float[Array, "m d"],
     interp: Float[Array, "i d"],

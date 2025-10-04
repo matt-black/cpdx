@@ -46,7 +46,6 @@ def update_matching(
     eps = jnp.finfo(x.dtype).eps
     bnds = jax.vmap(dimension_bounds, 1, 1)(x)
     v = jnp.prod(jnp.ptp(bnds))
-    print(v)
     d_t = sqdist(y_hat, x)
     # m_term is shape (m,1)
     m_term = jnp.expand_dims(

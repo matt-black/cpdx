@@ -10,7 +10,7 @@ __all__ = ["sqdist", "decompose_affine_transform"]
 def sqdist(
     x: Float[Array, "n d"], y: Float[Array, "m d"]
 ) -> Float[Array, "n m"]:
-    """sqdist Compute the squared distance between all pairs of two sets of input points.
+    """Compute the squared distance between all pairs of two sets of input points.
 
     Args:
         x (Float[Array, "n d"]): set of points
