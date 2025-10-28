@@ -19,6 +19,7 @@ __all__ = [
     "apply_Tinv",
     "residual",
     "interpolate",
+    "interpolate_covariance"
 ]
 
 
@@ -162,7 +163,62 @@ def interpolate(
     var: float,
     eps: float = 1e-12,
 ) -> Float[Array, "i d"]:
+    """Predict the mean vector at each interpolation point.
+
+    Args:
+        mov (Float[Array, "m d"]): points from moving point cloud
+        interp (Float[Array, "i d"]): points to interpolate vectors at
+        resid (Float[Array, "m d"]): fitting residual
+        P (Float[Array, "n m"]): fitted matching matrix
+        G_mm (Float[Array, "m m"]): gram matrix between all pairs of points in moving point cloud
+        kernel (KernelFunction): kernel function
+        beta (float): shape parameter for kernel
+        s (float): fitted scaling term
+        lambda_ (float): regularization parameter
+        var (float): fitted variance (variance at termination)
+        eps (float, optional): small parameter to prevent division by zero. Defaults to 1e-12.
+
+    Returns:
+        Float[Array, "i d"]: vectors at interpolated points
+    """
     nu = jnp.clip(jnp.sum(P, axis=1), eps)
     psi = (lambda_ * var / s**2) * jnp.diag(1.0 / nu)
     G = affinity_matrix(interp, mov, kernel, beta)
     return G @ jnp.linalg.inv(G_mm + psi) @ resid
+
+
+def interpolate_covariance(
+    mov: Float[Array, "m d"],
+    interp: Float[Array, "i d"],
+    P: Float[Array, "n m"],
+    G_mm: Float[Array, "m m"],
+    kernel: KernelFunction,
+    beta: float,
+    s: float,
+    lambda_: float,
+    var: float,
+    eps: float = 1e-12,
+) -> Float[Array, "i d"]:
+    """Predict the covariance matrix between all interpolation points.
+
+    Args:
+        mov (Float[Array, "m d"]): points from moving point cloud
+        interp (Float[Array, "i d"]): points to interpolate vectors at
+        resid (Float[Array, "m d"]): fitting residual
+        P (Float[Array, "n m"]): fitted matching matrix
+        G_mm (Float[Array, "m m"]): gram matrix between all pairs of points in moving point cloud
+        kernel (KernelFunction): kernel function
+        beta (float): shape parameter for kernel
+        s (float): fitted scaling term
+        lambda_ (float): regularization parameter
+        var (float): fitted variance (variance at termination)
+        eps (float, optional): small parameter to prevent division by zero. Defaults to 1e-12.
+
+    Returns:
+        Float[Array, "i i"]: covariance matrix 
+    """
+    nu = jnp.clip(jnp.sum(P, axis=1), eps)
+    psi = (lambda_ * var / s**2) * jnp.diag(1.0 / nu)
+    G_im = affinity_matrix(interp, mov, kernel, beta)
+    G_ii = affinity_matrix(interp, interp, kernel, beta)
+    return G_ii + psi - G_im @ jnp.linalg.inv(G_mm + psi) @ jnp.transpose(G_im)
