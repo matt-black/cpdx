@@ -4,7 +4,7 @@ from jaxtyping import Array
 from jaxtyping import Float
 
 from .._matching import MatchingMatrix
-from ..deformable import KernelMatrix
+from ..nonrigid import KernelMatrix
 from ..rigid import RotationMatrix
 from ..rigid import ScalingTerm
 from ..rigid import Translation
