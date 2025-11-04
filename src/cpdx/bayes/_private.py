@@ -13,9 +13,9 @@ from ..rigid import RotationMatrix
 from ..rigid import ScalingTerm
 from ..rigid import Translation
 from ..util import sqdist
-from .util import apply_T
-from .util import apply_Tinv
 from .util import dimension_bounds
+from .util import transform as apply_T
+from .util import transform_inverse as apply_Tinv
 
 
 __all__ = [

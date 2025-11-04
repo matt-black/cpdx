@@ -23,9 +23,9 @@ from ._private import update_matching
 from ._private import update_rigid
 from ._private import update_variance
 from .kernel import KernelFunction
-from .util import apply_T as transform
 from .util import initialize
 from .util import interpolate
+from .util import transform as transform
 
 
 __all__ = [

@@ -15,11 +15,11 @@ from .kernel import KernelFunction
 __all__ = [
     "affinity_matrix",
     "initialize",
-    "apply_T",
-    "apply_Tinv",
+    "transform",
+    "transform_inverse",
     "residual",
     "interpolate",
-    "interpolate_covariance"
+    "interpolate_covariance",
 ]
 
 
@@ -40,9 +40,7 @@ def affinity_matrix(
     Returns:
         KernelMatrix
     """
-    return jax.vmap(
-        lambda x1: jax.vmap(lambda y1: kernel(x1, y1, beta))(y)
-    )(x)
+    return jax.vmap(lambda x1: jax.vmap(lambda y1: kernel(x1, y1, beta))(y))(x)
 
 
 def initialize(
@@ -81,7 +79,7 @@ def initialize(
     return G, alpha_m, sigma_m, var
 
 
-def apply_T(
+def transform(
     x: Float[Array, "n d"],
     R: RotationMatrix,
     s: ScalingTerm,
@@ -104,7 +102,7 @@ def apply_T(
     return (R.T @ x.T).T * s + t
 
 
-def apply_Tinv(
+def transform_inverse(
     x: Float[Array, "n d"],
     R: RotationMatrix,
     s: ScalingTerm,
@@ -121,7 +119,7 @@ def apply_Tinv(
     Returns:
         Float[Array, "n d"]: transformed points
     """
-    return apply_T(x - t[None, :], R, 1 / s, jnp.array(0.0))
+    return transform(x - t[None, :], R, 1 / s, jnp.array(0.0))
 
 
 def dimension_bounds(x: Float[Array, " n"]) -> Float[Array, " 2"]:
@@ -147,7 +145,7 @@ def residual(
 ) -> Float[Array, "m d"]:
     nu = jnp.clip(jnp.sum(P, axis=1), eps)
     ref_hat = jnp.diag(jnp.divide(1.0, nu)) @ P @ ref
-    return apply_Tinv(ref_hat, R, s, t) - mov
+    return transform_inverse(ref_hat, R, s, t) - mov
 
 
 def interpolate(
@@ -215,7 +213,7 @@ def interpolate_covariance(
         eps (float, optional): small parameter to prevent division by zero. Defaults to 1e-12.
 
     Returns:
-        Float[Array, "i i"]: covariance matrix 
+        Float[Array, "i i"]: covariance matrix
     """
     nu = jnp.clip(jnp.sum(P, axis=1), eps)
     psi = (lambda_ * var / s**2) * jnp.diag(1.0 / nu)
