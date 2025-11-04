@@ -8,7 +8,7 @@ from jaxtyping import Array
 from jaxtyping import Float
 
 from .._matching import MatchingMatrix
-from ..deformable import KernelMatrix
+from ..nonrigid import KernelMatrix
 from ..rigid import RotationMatrix
 from ..rigid import ScalingTerm
 from ..rigid import Translation
@@ -21,7 +21,7 @@ from .util import transform_inverse as apply_Tinv
 __all__ = [
     "update_matching",
     "update_rigid",
-    "update_deformable",
+    "update_nonrigid",
     "update_variance",
 ]
 
@@ -67,7 +67,7 @@ def update_matching(
 
 
 @Partial(jax.jit, static_argnums=(10, 11))
-def update_deformable(
+def update_nonrigid(
     x_hat: Float[Array, "m d"],
     y: Float[Array, "m d"],
     G: KernelMatrix,

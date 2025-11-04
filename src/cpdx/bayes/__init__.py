@@ -14,12 +14,12 @@ from jaxtyping import Bool
 from jaxtyping import Float
 
 from .._matching import MatchingMatrix
-from ..deformable import KernelMatrix
+from ..nonrigid import KernelMatrix
 from ..rigid import RotationMatrix
 from ..rigid import ScalingTerm
 from ..rigid import Translation
-from ._private import update_deformable
 from ._private import update_matching
+from ._private import update_nonrigid
 from ._private import update_rigid
 from ._private import update_variance
 from .kernel import KernelFunction
@@ -257,8 +257,8 @@ def _align_tolerance(
         P, nu, nu_prime, n_hat, x_hat = update_matching(
             x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
         )
-        # maximization step is update_deformable then update_rigid
-        v_hat, u_hat, sigma_m, alpha_m = update_deformable(
+        # maximization step is update_nonrigid then update_rigid
+        v_hat, u_hat, sigma_m, alpha_m = update_nonrigid(
             x_hat,
             y,
             G,
@@ -329,7 +329,7 @@ def _align_fixed_iter(
         P, nu, nu_prime, n_hat, x_hat = update_matching(
             x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
         )
-        v_hat, u_hat, sigma_m, alpha_m = update_deformable(
+        v_hat, u_hat, sigma_m, alpha_m = update_nonrigid(
             x_hat,
             y,
             G,

@@ -15,16 +15,16 @@ from jaxtyping import Float
 from .affine import TransformParams as AffineTransformParams
 from .affine import align as align_affine
 from .affine import align_fixed_iter as align_fixed_iter_affine
-from .deformable import TransformParams as DeformableTransformParams
-from .deformable import align as align_deformable
-from .deformable import align_fixed_iter as align_fixed_iter_deformable
+from .nonrigid import TransformParams as CoherentMotionTransformParams
+from .nonrigid import align as align_nonrigid
+from .nonrigid import align_fixed_iter as align_fixed_iter_nonrigid
 from .rigid import TransformParams as RigidTransformParams
 from .rigid import align as align_rigid
 from .rigid import align_fixed_iter as align_fixed_iter_rigid
 
 
 type TransformParams = Union[
-    RigidTransformParams, AffineTransformParams, DeformableTransformParams
+    RigidTransformParams, AffineTransformParams, CoherentMotionTransformParams
 ]
 
 
@@ -32,7 +32,7 @@ __all__ = [
     "align",
     "align_rigid",
     "align_affine",
-    "align_deformable",
+    "align_nonrigid",
 ]
 
 
@@ -43,8 +43,8 @@ def align(
     outlier_prob: float,
     num_iter: int,
     tolerance: float | None,
-    regularization_param_deformable: float = 1.0,
-    kernel_stddev_deformable: float = 1.0,
+    regularization_param_nonrigid: float = 1.0,
+    kernel_stddev_nonrigid: float = 1.0,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -58,29 +58,29 @@ def align(
         outlier_prob (float): outlier probability, should be in range [0,1].
         num_iter (int): maximum # of iterations to optimize for. if tolerance is `None`, this is the number of iterations that will be optimized for.
         tolerance (float): tolerance for matching variance, below which the algorithm will terminate. If `None`, a fixed number of iterations is used.
-        regularization_param_deformable (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
-        kernel_stddev_deformable (float): standard deviation of Gaussian kernel function. only used if `method=deformable`.
+        regularization_param_nonrigid (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        kernel_stddev_nonrigid (float): standard deviation of Gaussian kernel function. only used if `method=nonrigid`.
 
     Returns:
         tuple[TransformParams, tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the final variance and the number of iterations that the algorithm was run for.
     """
-    if method == "deformable":
+    if method == "nonrigid":
         if tolerance is None:
-            return align_fixed_iter_deformable(
+            return align_fixed_iter_nonrigid(
                 ref,
                 mov,
                 outlier_prob,
-                regularization_param_deformable,
-                kernel_stddev_deformable,
+                regularization_param_nonrigid,
+                kernel_stddev_nonrigid,
                 num_iter,
             )
         else:
-            return align_deformable(
+            return align_nonrigid(
                 ref,
                 mov,
                 outlier_prob,
-                regularization_param_deformable,
-                kernel_stddev_deformable,
+                regularization_param_nonrigid,
+                kernel_stddev_nonrigid,
                 num_iter,
                 tolerance,
             )

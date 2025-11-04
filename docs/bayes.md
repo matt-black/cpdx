@@ -1,6 +1,6 @@
 # Bayesian Coherent Point Drift (BCPD)
 
-A fully probabilistic algorithm for coherent point drift. The algorithm simultaneously fits both a rigid and nonrigid ("deformable") transform. The full transform model is `y = sR(x + v) + t`.
+A fully probabilistic algorithm for coherent point drift. The algorithm simultaneously fits both a rigid and nonrigid ("nonrigid") transform. The full transform model is `y = sR(x + v) + t`.
 
 See Fig. 2 of [1] for algorithmic details.
 

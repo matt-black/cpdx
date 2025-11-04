@@ -7,7 +7,7 @@ The implementation is in [JAX](https://docs.jax.dev/en/latest/) and is thus GPU/
 
 Coherent point drift (CPD, [1,2]) and its associated bayesian variant (BCPD, [3,4]) are popular algorithms for point cloud registration.
 
-This library provides algorithms for rigid, affine, and non-rigid ("deformable") point cloud registration with coherent point drift. Each of these options is available under `cpdx.rigid`, `cpdx.affine` and `cpdx.deformable` modules, respectively. All of these modules expose the same API:
+This library provides algorithms for rigid, affine, and non-rigid ("nonrigid") point cloud registration with coherent point drift. Each of these options is available under `cpdx.rigid`, `cpdx.affine` and `cpdx.nonrigid` modules, respectively. All of these modules expose the same API:
 
 - `align`: optimize the alignment up to a specified tolerance, or a maximum number of iterations (whichever happens first).
 - `align_fixed_iter`: optimize the alignment for a fixed number of EM iterations.

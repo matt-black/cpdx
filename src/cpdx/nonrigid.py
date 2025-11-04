@@ -35,7 +35,7 @@ def align(
     max_iter: int,
     tolerance: float,
 ) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
-    """Align the moving points onto the reference points by a deformable transform.
+    """Align the moving points onto the reference points by a nonrigid transform.
 
     Args:
         ref (Float[Array, "n d"]): reference points
@@ -99,7 +99,7 @@ def align_fixed_iter(
     kernel_stddev: float,
     num_iter: int,
 ) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
-    """Align the moving points onto the reference points by a deformable transform.
+    """Align the moving points onto the reference points by a nonrigid transform.
 
     Args:
         ref (Float[Array, "n d"]): reference points
@@ -176,7 +176,7 @@ def transform(
     G: KernelMatrix,
     W: CoeffMatrix,
 ) -> Float[Array, "m d"]:
-    """Transform the input points by deformable warping.
+    """Transform the input points by nonrigid warping.
 
     Args:
         y (Float[Array, "m d"]): `d`-dimensional points to be transformed
