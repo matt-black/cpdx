@@ -6,6 +6,7 @@ from jaxtyping import Float
 
 from ._matching import MatchingMatrix
 from ._matching import expectation
+from ._matching import expectation_weighted
 from .util import sqdist
 
 
@@ -14,7 +15,9 @@ __all__ = [
     "CoeffMatrix",
     "TransformParams",
     "align",
+    "align_weighted",
     "align_fixed_iter",
+    "align_fixed_iter_weighted",
     "transform",
     "interpolate",
     "maximization",
@@ -91,6 +94,75 @@ def align(
     return (P, W, G), (var_f, num_iter)
 
 
+def align_weighted(
+    ref: Float[Array, "n d"],
+    alpha_n: Float[Array, " n"],
+    mov: Float[Array, "m d"],
+    pi_m: Float[Array, " m"],
+    outlier_prob: float,
+    regularization_param: float,
+    kernel_stddev: float,
+    max_iter: int,
+    tolerance: float,
+) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
+    """Align the moving points onto the reference points by a deformable transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        alpha_n (Float[Array, " n"]): reference point weights
+        mov (Float[Array, "m d"]): moving points
+        pi_m (Float[Array, " m"]): moving point weights
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        kernel_stddev (float): standard deviation of Gaussian kernel function.
+        max_iter (int): maximum # of iterations to optimize for.
+        tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
+
+    Returns:
+        tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (the matching matrix and the kernel and coefficient matrices) along with the final variance and the number of iterations that the algorithm was run for.
+    """
+    # initialize variance
+    n, d = ref.shape
+    m, _ = mov.shape
+    var_i = jnp.sum(sqdist(ref, mov)) / (m * n * d)
+
+    # compute gaussian kernel matrix
+    G = jnp.exp(
+        jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_stddev**2))
+    )
+
+    def cond_fund(
+        a: tuple[
+            tuple[Float[Array, "m d"], Float[Array, "m m"]],
+            tuple[Float[Array, ""], int],
+        ],
+    ) -> Bool:
+        _, (var, iter_num) = a
+        return jnp.logical_and(var > tolerance, iter_num < max_iter)
+
+    def body_fund(
+        a: tuple[
+            tuple[CoeffMatrix, MatchingMatrix], tuple[Float[Array, ""], int]
+        ],
+    ) -> tuple[
+        tuple[CoeffMatrix, MatchingMatrix], tuple[Float[Array, ""], int]
+    ]:
+        (W, _), (var, iter_num) = a
+        mov_t = transform(mov, G, W)
+        P = expectation_weighted(ref, mov_t, var, outlier_prob, pi_m)
+        W, new_var = maximization_weighted(
+            ref, mov, P, G, var, regularization_param, tolerance, alpha_n
+        )
+        return ((W, P), (new_var, iter_num + 1))
+
+    (W, P), (var_f, num_iter) = jax.lax.while_loop(
+        cond_fund,
+        body_fund,
+        ((jnp.zeros_like(mov), jnp.zeros((m, n))), (var_i, 0)),
+    )
+    return (P, W, G), (var_f, num_iter)
+
+
 def align_fixed_iter(
     ref: Float[Array, "n d"],
     mov: Float[Array, "m d"],
@@ -141,6 +213,58 @@ def align_fixed_iter(
     return (P, W, G), varz
 
 
+def align_fixed_iter_weighted(
+    ref: Float[Array, "n d"],
+    alpha_n: Float[Array, " n"],
+    mov: Float[Array, "m d"],
+    pi_m: Float[Array, " m"],
+    outlier_prob: float,
+    regularization_param: float,
+    kernel_stddev: float,
+    num_iter: int,
+) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
+    """Align the moving points onto the reference points by a deformable transform.
+
+    Args:
+        ref (Float[Array, "n d"]): reference points
+        mov (Float[Array, "m d"]): moving points
+        outlier_prob (float): outlier probability, should be in range [0,1].
+        regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
+        kernel_stddev (float): standard deviation of Gaussian kernel function.
+        num_iter (int): # of iterations to optimize for.
+
+    Returns:
+        tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (the matching matrix and the kernel and coefficient matrices) along with the variance at each step of the optimization.
+    """
+    n, d = ref.shape
+    m, _ = mov.shape
+    # compute gaussian kernel
+    G = jnp.exp(
+        jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_stddev**2))
+    )
+    var_i = (jnp.sum(sqdist(ref, mov)) / (m * n * d)).item()
+
+    def scan_fun(
+        a: tuple[tuple[MatchingMatrix, CoeffMatrix], Float[Array, ""]],
+        _,
+    ):
+        (_, W), var = a
+        mov_t = transform(mov, G, W)
+        P = expectation_weighted(ref, mov_t, var, outlier_prob, pi_m)
+        W, new_var = maximization_weighted(
+            ref, mov, P, G, var, regularization_param, 0.0, alpha_n
+        )
+        return ((P, W), new_var), new_var
+
+    ((P, W), _), varz = jax.lax.scan(
+        scan_fun,
+        ((jnp.zeros((m, n)), jnp.zeros_like(mov)), var_i),
+        length=num_iter,
+    )
+
+    return (P, W, G), varz
+
+
 def maximization(
     x: Float[Array, "n d"],
     y: Float[Array, "m d"],
@@ -164,10 +288,27 @@ def maximization(
     Returns:
         tuple[tuple[AffineMatrix, Translation], Float[Array, ""]]:
     """
-
     W = update_transform(x, y, P, G, var, regularization_param)
     y_t = transform(y, G, W)
     new_var = update_variance(x, y_t, P, tolerance)
+    return W, new_var
+
+
+def maximization_weighted(
+    x: Float[Array, "n d"],
+    y: Float[Array, "m d"],
+    P: MatchingMatrix,
+    G: KernelMatrix,
+    var: Float[Array, ""],
+    regularization_param: float,
+    tolerance: float,
+    alpha_n: Float[Array, " n"],
+) -> tuple[CoeffMatrix, Float[Array, ""]]:
+    W = update_transform_weighted(
+        x, y, P, G, var, regularization_param, alpha_n
+    )
+    y_t = transform(y, G, W)
+    new_var = update_variance_weighted(x, y_t, P, tolerance, alpha_n)
     return W, new_var
 
 
@@ -204,6 +345,20 @@ def update_transform(
     return jnp.linalg.solve(A, B)
 
 
+def update_transform_weighted(
+    x: Float[Array, "n d"],
+    y: Float[Array, "m d"],
+    P: MatchingMatrix,
+    G: KernelMatrix,
+    var: Float[Array, ""],
+    regularization_param: float,
+    alpha_n: Float[Array, " n"],
+) -> CoeffMatrix:
+    A = G + regularization_param * var * jnp.diag(1.0 / (P @ alpha_n))
+    b = jnp.diag(1.0 / (P @ alpha_n)) @ P @ jnp.diag(alpha_n) @ x - y
+    return jnp.linalg.solve(A, b)
+
+
 def update_variance(
     x: Float[Array, "n d"],
     y_t: Float[Array, "m d"],
@@ -219,6 +374,25 @@ def update_variance(
         + jnp.trace(y_t.T @ jnp.diag(P1) @ y_t)
     )
     new = jnp.divide(val, N * d)
+    return jax.lax.select(new > 0, new, tolerance - 2 * jnp.finfo(x.dtype).eps)
+
+
+def update_variance_weighted(
+    x: Float[Array, "n d"],
+    y_t: Float[Array, "m d"],
+    P: MatchingMatrix,
+    tolerance: float,
+    alpha_n: Float[Array, " n"],
+) -> Float[Array, ""]:
+    _, d = x.shape
+    Pt1 = alpha_n * jnp.sum(P, axis=0)
+    N_p = jnp.sum(Pt1)
+    val = (
+        jnp.trace(x.T @ jnp.diag(Pt1) @ x)
+        - 2 * jnp.trace((P @ jnp.diag(alpha_n) @ x).T @ y_t)
+        + jnp.trace(y_t.T @ jnp.diag(P @ alpha_n) @ y_t)
+    )
+    new = jnp.divide(val, N_p * d)
     return jax.lax.select(new > 0, new, tolerance - 2 * jnp.finfo(x.dtype).eps)
 
 
