@@ -13,6 +13,8 @@ The `TransformParams` object returned by `align` and `align_fixed_iter` is a `tu
 3. `ScalingTerm`, a scalar array corresponding with the isotropic scaling term of the transform.
 4. `Translation`, a `d`-length vector representing the translation. Note that this translation is at the scale of the reference point set (in the forward transform, it is applied *after* scaling).
 
+In addition to `TransformParams`, `align` returns a tuple of the final variance and the number of iterations performed. `align_fixed_iter` instead returns an array of the variance at each step of the optimization.
+
 ::: cpdx.rigid.align
     handler: python
     options:

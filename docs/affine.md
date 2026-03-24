@@ -11,6 +11,8 @@ The `TransformParams` object returned by `align` and `align_fixed_iter` is a `tu
 2. `AffineMatrix` of shape `(d,d)` where `d` is the dimension of the point sets (usually 2 or 3).
 3. `Translation`, a `d`-length vector representing the translation. Note that this translation is at the scale of the reference point set (in the forward transform, it is applied *after* rotation/shearing/scaling).
 
+In addition to `TransformParams`, `align` returns a tuple of the final variance and the number of iterations performed. `align_fixed_iter` instead returns an array of the variance at each step of the optimization.
+
 ::: cpdx.affine.align
     handler: python
     options:

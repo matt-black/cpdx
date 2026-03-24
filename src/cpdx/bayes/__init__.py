@@ -87,6 +87,7 @@ def align(
         transform_mode (str): transform mode, one of "both" (default), "rigid", or "nonrigid". Controls which transform components are updated.
         normalize_input (bool): if True, inputs are normalized to zero mean and unit variance before alignment, and results are denormalized. Defaults to False.
         debias (bool): if True, includes a de-biasing term (average deformation uncertainty) in the rigid scale calculation. This can stabilize scale recovery in some cases but may cause collapse in others. Defaults to False.
+        return_weights (bool): if True, returns the GP weights `W` instead of the deformation vectors `v` in the `TransformParams` tuple. Defaults to False.
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -235,6 +236,7 @@ def align_with_ic(
         transform_mode (str): transform mode, one of "both" (default), "rigid", or "nonrigid". Controls which transform components are updated.
         normalize_input (bool): if True, inputs are normalized to zero mean and unit variance before alignment, and results are denormalized. Defaults to False.
         debias (bool): if True, includes a de-biasing term in the rigid scale calculation. Defaults to False.
+        return_weights (bool): if True, returns the GP weights `W` instead of the deformation vectors `v` in the `TransformParams` tuple. Defaults to False.
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.

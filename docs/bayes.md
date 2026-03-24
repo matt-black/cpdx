@@ -10,7 +10,9 @@ The `TransformParams` object returned by `align` and `align_with_ic` is a `tuple
 2. `RotationMatrix` of shape `(d,d)` where `d` is the dimension of the point sets (usually 2 or 3).
 3. `ScalingTerm`, a scalar array corresponding with the isotropic scaling term of the transform.
 4. `Translation`, a `d`-length vector representing the translation. Note that this translation is at the scale of the reference point set (in the forward transform, it is applied *after* scaling).
-5. `VectorField` vectors at each point in the moving point cloud that tell how to move that point during alignment. Note that these vectors are in the
+5. `VectorField`, a matrix of shape `(m,d)` containing the displacement vectors for each point in the moving point set.
+
+The `align` and `align_with_ic` functions also support additional parameters for more complex workflows, such as `fixed_alpha` for fixed mixing coefficients, `transform_mode` to restrict updates to rigid or nonrigid components, `normalize_input` for automatic data scaling, and `return_weights` to return GP weights instead of displacement vectors.
 
 ::: cpdx.bayes.align
     handler: python
@@ -30,7 +32,13 @@ The `TransformParams` object returned by `align` and `align_with_ic` is a `tuple
         show_source: false
         show_root_heading: true
 
-::: cpdx.bayes.interpolate
+::: cpdx.bayes.util.interpolate
+    handler: python
+    options:
+        show_source: false
+        show_root_heading: true
+
+::: cpdx.bayes.util.interpolate_covariance
     handler: python
     options:
         show_source: false
@@ -74,7 +82,13 @@ Utility functions for working with BCPD.
         show_source: false
         show_root_heading: true
 
-::: cpdx.bayes.util.apply_Tinv
+::: cpdx.bayes.util.transform_inverse
+    handler: python
+    options:
+        show_source: false
+        show_root_heading: true
+
+::: cpdx.bayes.util.invert_gp_mapping
     handler: python
     options:
         show_source: false

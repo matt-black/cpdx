@@ -7,8 +7,10 @@ For details, see Section 5 and Figure 4 of [2].
 The `TransformParams` object returned by `align` and `align_fixed_iter` is a `tuple` of three arrays:
 
 1. `MatchingMatrix` of shape `(m,n)` where the `ij`-th value of the array is the probability that point `n` in the moving set is matched with point `m` from the reference set.
-2. `AffineMatrix` of shape `(d,d)` where `d` is the dimension of the point sets (usually 2 or 3).
-3. `Translation`, a `d`-length vector representing the translation. Note that this translation is at the scale of the reference point set (in the forward transform, it is applied *after* rotation/shearing/scaling).
+2. `KernelMatrix` of shape `(m,m)` containing the Gaussian kernel values between all pairs of points in the moving point set.
+3. `CoeffMatrix` of shape `(m,d)` containing the fitted coefficients for the nonrigid transform.
+
+In addition to `TransformParams`, `align` returns a tuple of the final variance and the number of iterations performed. `align_fixed_iter` instead returns an array of the variance at each step of the optimization.
 
 ::: cpdx.nonrigid.align
     handler: python

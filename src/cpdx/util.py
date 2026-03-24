@@ -279,7 +279,7 @@ def gaussian_rbf_interpolate(
     bandwidth: float | None = None,
     k_neighbors: int = 50,
     scan: bool = False,
-):
+) -> Float[Array, "m d"]:
     """Do sparse gaussian RBF interpolation using k-nearest neighbors.
 
     This uses a KD tree to find k nearest neighbors for each query point,
@@ -294,7 +294,7 @@ def gaussian_rbf_interpolate(
         k_neighbors: number of nearest neighbors to use for local interpolation (default: 50)
 
     Returns:
-        (M, d) array of interpolated values
+        Float[Array, "m d"]: (M, d) array of interpolated values
     """
 
     # Auto-compute bandwidth if not provided

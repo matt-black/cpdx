@@ -15,6 +15,7 @@ This library provides algorithms for rigid, affine, and nonrigid point cloud reg
 - `maximization`: do a single M-step of the CPD algorithm.
 
 An implementation of bayesian coherent point drift is available in the `cpdx.bayes` module, which follows a similar but extended API to accommodate its probabilistic nature and additional configuration options.
+An implementation of bayesian coherent point drift is available in the `cpdx.bayes` module, which follows a similar but extended API to accommodate its probabilistic nature and additional configuration options.
 
 ## References
 

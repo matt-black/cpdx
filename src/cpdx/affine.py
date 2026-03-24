@@ -43,6 +43,8 @@ def align(
         outlier_prob (float): outlier probability, should be in range [0,1].
         max_iter (int): maximum # of iterations to optimize for.
         tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
+        moving_weights (Float[Array, " m"] | None): optional per-point weights for source points (arbitrary positive values). If None, uniform weights are used.
+        mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
 
     Returns:
         tuple[TransformParams, tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the final variance and the number of iterations that the algorithm was run for.
@@ -145,6 +147,8 @@ def align_fixed_iter(
         mov (Float[Array, "m d"]): moving points
         outlier_prob (float): outlier probability, should be in range [0,1].
         num_iter (int): # of iterations to optimize for.
+        moving_weights (Float[Array, " m"] | None): optional per-point weights for source points (arbitrary positive values). If None, uniform weights are used.
+        mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
 
     Returns:
         tuple[TransformParams, Float[Array, " {num_iter}"]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the variance at each step of the optimization.
