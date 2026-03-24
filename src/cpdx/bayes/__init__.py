@@ -5,10 +5,12 @@ References
 [1] O. Hirose, "A Bayesian Formulation of Coherent Point Drift," in IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 43, no. 7, pp. 2269-2286, 1 July 2021, doi: 10.1109/TPAMI.2020.2971687.
 """
 
+import math
 from typing import Union
 
 import jax
 import jax.numpy as jnp
+from jax.scipy.special import digamma
 from jaxtyping import Array
 from jaxtyping import Bool
 from jaxtyping import Float
@@ -23,8 +25,9 @@ from ._private import update_nonrigid
 from ._private import update_rigid
 from ._private import update_variance
 from .kernel import KernelFunction
+from .normalization import denormalize_parameters
+from .normalization import normalize_points
 from .util import initialize
-from .util import interpolate
 from .util import transform as transform
 
 
@@ -32,7 +35,6 @@ __all__ = [
     "align",
     "align_with_ic",
     "transform",
-    "interpolate",
     "TransformParams",
     "VectorField",
 ]
@@ -57,6 +59,11 @@ def align(
     kernel_beta: float,
     gamma: float,
     kappa: float,
+    fixed_alpha: Float[Array, " m"] | None = None,
+    transform_mode: str = "both",
+    normalize_input: bool = False,
+    debias: bool = False,
+    return_weights: bool = False,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -76,6 +83,10 @@ def align(
         kernel_beta (float): shape parameter for the kernel function. For gaussian kernels, this corresponds to the standard deviation of the gaussian.
         gamma (float): scalar to scale initial variance estimate by.
         kappa (float): shape parameter for Dirichlet distribution used during matching. Set to `math.inf` if mixing coefficients for all points should be equal.
+        fixed_alpha (Float[Array, " m"] | None): optional fixed mixing coefficients. If provided, alpha_m will not be updated during optimization.
+        transform_mode (str): transform mode, one of "both" (default), "rigid", or "nonrigid". Controls which transform components are updated.
+        normalize_input (bool): if True, inputs are normalized to zero mean and unit variance before alignment, and results are denormalized. Defaults to False.
+        debias (bool): if True, includes a de-biasing term (average deformation uncertainty) in the rigid scale calculation. This can stabilize scale recovery in some cases but may cause collapse in others. Defaults to False.
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -84,18 +95,41 @@ def align(
         Unpack the return parameters like `(P, R, s, t, v), _ = align(...)`.
     """
     _, d = mov.shape
+
+    # Validate transform_mode
+    if transform_mode not in ["both", "rigid", "nonrigid"]:
+        raise ValueError(
+            f"transform_mode must be 'both', 'rigid', or 'nonrigid', got '{transform_mode}'"
+        )
+
+    # Input Normalization
+    if normalize_input:
+        ref_norm, mu_x, sigma_x = normalize_points(ref)
+        mov_norm, mu_y, sigma_y = normalize_points(mov)
+    else:
+        ref_norm, mov_norm = ref, mov
+        mu_x, mu_y, sigma_x, sigma_y = 0, 0, 0, 0
+
     G, alpha_m, sigma_m, var_i = initialize(
-        ref, mov, kernel, kernel_beta, gamma
+        ref_norm, mov_norm, kernel, kernel_beta, gamma
     )
+
+    if fixed_alpha is not None:
+        alpha_m = fixed_alpha
+
+    # If transform_mode is rigid, force sigma_m to 0 (no deformation uncertainty)
+    if transform_mode == "rigid":
+        sigma_m = jnp.zeros_like(sigma_m)
+
     R = jnp.eye(d)
     s = jnp.array(1.0)
     t = jnp.zeros((d,))
     v_hat = jnp.zeros_like(mov)
 
     if tolerance is None:
-        return _align_fixed_iter(
-            ref,
-            mov,
+        (P, R, s, t, v), var = _align_fixed_iter(
+            ref_norm,
+            mov_norm,
             lambda_param,
             outlier_prob,
             kappa,
@@ -108,11 +142,15 @@ def align(
             sigma_m,
             alpha_m,
             var_i,
+            fixed_alpha,
+            transform_mode,
+            debias,
+            return_weights,
         )
     else:
-        return _align_tolerance(
-            ref,
-            mov,
+        (P, R, s, t, v), var = _align_tolerance(
+            ref_norm,
+            mov_norm,
             lambda_param,
             outlier_prob,
             kappa,
@@ -126,7 +164,26 @@ def align(
             sigma_m,
             alpha_m,
             var_i,
+            fixed_alpha,
+            transform_mode,
+            debias,
+            return_weights,
         )
+
+    # Denormalize if needed
+    if normalize_input:
+        R, s, t, v = denormalize_parameters(
+            R,
+            s,
+            t,
+            v,
+            mu_y,  # pyright: ignore[reportArgumentType]
+            sigma_y,  # pyright: ignore[reportArgumentType]
+            mu_x,  # pyright: ignore[reportArgumentType]
+            sigma_x,  # pyright: ignore[reportArgumentType]
+        )
+
+    return (P, R, s, t, v), var
 
 
 def align_with_ic(
@@ -146,6 +203,12 @@ def align_with_ic(
     sigma_m: Float[Array, " m"],
     alpha_m: Float[Array, " m"],
     var_i: Float[Array, ""],
+    # optional parameters
+    fixed_alpha: Float[Array, " m"] | None = None,
+    transform_mode: str = "both",
+    normalize_input: bool = False,
+    debias: bool = False,
+    return_weights: bool = False,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -168,6 +231,10 @@ def align_with_ic(
         sigma_m (Float[Array, " m"]): initial per-moving point variances
         alpha_m (Float[Array, " m"]): initial mixing coefficients
         var_i (Float[Array, ""]): initial estimate of residual variance
+        fixed_alpha (Float[Array, " m"] | None): optional fixed mixing coefficients. If provided, alpha_m will not be updated during optimization.
+        transform_mode (str): transform mode, one of "both" (default), "rigid", or "nonrigid". Controls which transform components are updated.
+        normalize_input (bool): if True, inputs are normalized to zero mean and unit variance before alignment, and results are denormalized. Defaults to False.
+        debias (bool): if True, includes a de-biasing term in the rigid scale calculation. Defaults to False.
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -175,10 +242,27 @@ def align_with_ic(
     Notes:
         Unpack the return parameters like `(P, R, s, t, v), _ = align(...)`.
     """
+    # Validate transform_mode
+    if transform_mode not in ["both", "rigid", "nonrigid"]:
+        raise ValueError(
+            f"transform_mode must be 'both', 'rigid', or 'nonrigid', got '{transform_mode}'"
+        )
+
+    # Input Normalization
+    if normalize_input:
+        ref_norm, mu_x, sigma_x = normalize_points(ref)
+        mov_norm, mu_y, sigma_y = normalize_points(mov)
+    else:
+        ref_norm, mov_norm = ref, mov
+
+    # Use fixed_alpha if provided
+    if fixed_alpha is not None:
+        alpha_m = fixed_alpha
+
     if tolerance is not None:
-        return _align_tolerance(
-            ref,
-            mov,
+        (P, R, s, t, v), var = _align_tolerance(
+            ref_norm,
+            mov_norm,
             lambda_param,
             outlier_prob,
             kappa,
@@ -192,11 +276,15 @@ def align_with_ic(
             sigma_m,
             alpha_m,
             var_i,
+            fixed_alpha,
+            transform_mode,
+            debias,
+            return_weights,
         )
     else:
-        return _align_fixed_iter(
-            ref,
-            mov,
+        (P, R, s, t, v), var = _align_fixed_iter(
+            ref_norm,
+            mov_norm,
             lambda_param,
             outlier_prob,
             kappa,
@@ -209,7 +297,26 @@ def align_with_ic(
             sigma_m,
             alpha_m,
             var_i,
+            fixed_alpha,
+            transform_mode,
+            debias,
+            return_weights,
         )
+
+    # Denormalize if needed
+    if normalize_input:
+        R, s, t, v = denormalize_parameters(
+            R,
+            s,
+            t,
+            v,
+            mu_y,  # pyright: ignore[reportPossiblyUnboundVariable]
+            sigma_y,  # pyright: ignore[reportPossiblyUnboundVariable]
+            mu_x,  # pyright: ignore[reportPossiblyUnboundVariable]
+            sigma_x,  # pyright: ignore[reportPossiblyUnboundVariable]
+        )
+
+    return (P, R, s, t, v), var
 
 
 type _StateType = tuple[
@@ -220,6 +327,7 @@ type _StateType = tuple[
     Float[Array, " m"],  # sigma_m
     Float[Array, " m"],  # alpha_m
     Float[Array, "m d"],  # v_hat (current vector field)
+    Float[Array, "m d"],  # W (current GP weights)
     Float[Array, "m d"],  # y_hat (current aligned moving points)
     Float[Array, ""],  # current variance
     int,  # current iteration
@@ -242,49 +350,130 @@ def _align_tolerance(
     sigma_m: Float[Array, " m"],
     alpha_m: Float[Array, " m"],
     var_i: Float[Array, ""],
+    fixed_alpha: Float[Array, " m"] | None,
+    transform_mode: str,
+    debias: bool,
+    return_weights: bool,
 ) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
-    n, _ = x.shape
+    n, d = x.shape
     m, _ = y.shape
 
     def cond_fun(a: _StateType) -> Bool:
-        _, _, _, _, _, _, _, _, var, iter_num = a
+        _, _, _, _, _, _, _, _, _, var, iter_num = a
         return jnp.logical_and(var > tolerance, iter_num < max_iter)
 
     def body_fun(a: _StateType) -> _StateType:
         # unpack
-        _, R, s, t, sigma_m, alpha_m, v_hat, y_hat, var, iter_num = a
+        _, R, s, t, sigma_m, alpha_m, v_hat, W, y_hat, var, iter_num = a
         # expectation step
         P, nu, nu_prime, n_hat, x_hat = update_matching(
             x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
         )
-        # maximization step is update_nonrigid then update_rigid
-        v_hat, u_hat, sigma_m, alpha_m = update_nonrigid(
-            x_hat,
-            y,
-            G,
-            R,
-            s,
-            t,
-            v_hat,
-            nu,
-            var,
-            n_hat,
-            kappa,
-            lambda_,
-        )
-        R, s, t, var_bar = update_rigid(y, x_hat, u_hat, sigma_m, nu, n_hat)
+
+        # maximization step depends on transform_mode
+        if transform_mode == "rigid":
+            # Only update rigid transform, keep v_hat = 0
+            u_hat = y
+            # Update alpha_m for matching (if not fixed)
+            if fixed_alpha is not None:
+                alpha_m = fixed_alpha
+            elif math.isinf(kappa):
+                alpha_m = nu / n_hat
+            else:
+                alpha_m = jnp.exp(
+                    digamma(kappa + nu) - digamma(kappa * m + n_hat)
+                )
+
+            R, s, t, _ = update_rigid(
+                y, x_hat, u_hat, sigma_m, nu, n_hat, debias
+            )
+            var_bar = jnp.array(0.0)
+            v_hat = jnp.zeros_like(y)
+            W = jnp.zeros_like(y)
+
+        elif transform_mode == "nonrigid":
+            # Only update nonrigid deformation, keep R=I, s=1, t=0
+            v_hat, u_hat, sigma_m, alpha_m, W = update_nonrigid(
+                x_hat,
+                y,
+                G,
+                R,
+                s,
+                t,
+                nu,
+                var,
+                n_hat,
+                kappa,
+                lambda_,
+                fixed_alpha,
+            )
+            R = jnp.eye(d)
+            s = jnp.array(1.0)
+            t = jnp.zeros(d)
+            var_bar = jnp.array(0.0)
+
+        else:  # "both"
+            # Update both nonrigid and rigid (current behavior)
+            v_hat, u_hat, sigma_m, alpha_m, W = update_nonrigid(
+                x_hat,
+                y,
+                G,
+                R,
+                s,
+                t,
+                nu,
+                var,
+                n_hat,
+                kappa,
+                lambda_,
+                fixed_alpha,
+            )
+            R, s, t, var_bar = update_rigid(
+                y, x_hat, u_hat, sigma_m, nu, n_hat, debias
+            )
+
         # remap points using updated transform
         y_hat = transform(y + v_hat, R, s, t)
         # update variance to track how well the point clouds match
         var = update_variance(x, y_hat, P, s, nu, nu_prime, n_hat, var_bar)
-        return P, R, s, t, sigma_m, alpha_m, v_hat, y_hat, var, iter_num + 1
+        return (
+            P,
+            R,
+            s,
+            t,
+            sigma_m,
+            alpha_m,
+            v_hat,
+            W,
+            y_hat,
+            var,
+            iter_num + 1,
+        )
 
-    P, R, s, t, sigma_m, alpha_m, v_hat, _, var, iter_num = jax.lax.while_loop(
-        cond_fun,
-        body_fun,
-        (jnp.empty((m, n)), R, s, t, sigma_m, alpha_m, v_hat, y, var_i, 0),
+    init_W = jnp.zeros_like(y)
+    P, R, s, t, sigma_m, alpha_m, v_hat, W, _, var, iter_num = (
+        jax.lax.while_loop(
+            cond_fun,
+            body_fun,
+            (
+                jnp.empty((m, n)),
+                R,
+                s,
+                t,
+                sigma_m,
+                alpha_m,
+                v_hat,
+                init_W,
+                y,
+                var_i,
+                0,
+            ),
+        )
     )
-    return (P, R, s, t, v_hat), (var, iter_num)
+    return (P, R, s, t, jax.lax.select(return_weights, W, v_hat)), (
+        var,
+        iter_num,
+    )
 
 
 type _CarryType = tuple[
@@ -295,6 +484,7 @@ type _CarryType = tuple[
     Float[Array, " m"],  # sigma_m
     Float[Array, " m"],  # alpha_m
     Float[Array, "m d"],  # v_hat (current vector field)
+    Float[Array, "m d"],  # W (current GP weights)
     Float[Array, "m d"],  # y_hat (current aligned moving points)
     Float[Array, ""],  # current variance
 ]
@@ -315,8 +505,12 @@ def _align_fixed_iter(
     sigma_m: Float[Array, " m"],
     alpha_m: Float[Array, " m"],
     var_i: Float[Array, ""],
+    fixed_alpha: Float[Array, " m"] | None,
+    transform_mode: str,
+    debias: bool,
+    return_weights: bool,
 ) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
-    n, _ = x.shape
+    n, d = x.shape
     m, _ = y.shape
 
     def scan_fun(
@@ -324,34 +518,82 @@ def _align_fixed_iter(
         _,
     ) -> tuple[_CarryType, Float[Array, ""]]:
         # unpack the carry
-        _, R, s, t, sigma_m, alpha_m, v_hat, y_hat, var = carry
+        _, R, s, t, sigma_m, alpha_m, v_hat, W, y_hat, var = carry
         # update matching
         P, nu, nu_prime, n_hat, x_hat = update_matching(
             x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
         )
-        v_hat, u_hat, sigma_m, alpha_m = update_nonrigid(
-            x_hat,
-            y,
-            G,
-            R,
-            s,
-            t,
-            v_hat,
-            nu,
-            var,
-            n_hat,
-            kappa,
-            lambda_,
-        )
-        R, s, t, var_bar = update_rigid(y, x_hat, u_hat, sigma_m, nu, n_hat)
+
+        # maximization step depends on transform_mode
+        if transform_mode == "rigid":
+            # Only update rigid transform, keep v_hat = 0
+            u_hat = y
+            # Update alpha_m for matching (if not fixed)
+            if fixed_alpha is not None:
+                alpha_m = fixed_alpha
+            elif math.isinf(kappa):
+                alpha_m = nu / n_hat
+            else:
+                alpha_m = jnp.exp(
+                    digamma(kappa + nu) - digamma(kappa * m + n_hat)
+                )
+            R, s, t, _ = update_rigid(
+                y, x_hat, u_hat, sigma_m, nu, n_hat, debias
+            )
+            var_bar = jnp.array(0.0)
+            v_hat = jnp.zeros_like(y)
+            W = jnp.zeros_like(y)
+
+        elif transform_mode == "nonrigid":
+            # Only update nonrigid deformation, keep R=I, s=1, t=0
+            v_hat, u_hat, sigma_m, alpha_m, W = update_nonrigid(
+                x_hat,
+                y,
+                G,
+                R,
+                s,
+                t,
+                nu,
+                var,
+                n_hat,
+                kappa,
+                lambda_,
+                fixed_alpha,
+            )
+            R = jnp.eye(d)
+            s = jnp.array(1.0)
+            t = jnp.zeros(d)
+            var_bar = jnp.array(0.0)
+
+        else:  # "both"
+            # Update both nonrigid and rigid (current behavior)
+            v_hat, u_hat, sigma_m, alpha_m, W = update_nonrigid(
+                x_hat,
+                y,
+                G,
+                R,
+                s,
+                t,
+                nu,
+                var,
+                n_hat,
+                kappa,
+                lambda_,
+                fixed_alpha,
+            )
+            R, s, t, var_bar = update_rigid(
+                y, x_hat, u_hat, sigma_m, nu, n_hat, debias
+            )
+
         y_hat = transform(y + v_hat, R, s, t)
         var = update_variance(x, y_hat, P, s, nu, nu_prime, n_hat, var_bar)
-        return (P, R, s, t, sigma_m, alpha_m, v_hat, y_hat, var), var
+        return (P, R, s, t, sigma_m, alpha_m, v_hat, W, y_hat, var), var
 
-    (P, R, s, t, _, _, v_hat, _, _), varz = jax.lax.scan(
+    init_W = jnp.zeros_like(y)
+    (P, R, s, t, _, _, v_hat, W, _, _), varz = jax.lax.scan(
         scan_fun,
-        (jnp.empty((m, n)), R, s, t, sigma_m, alpha_m, v_hat, y, var_i),
+        (jnp.empty((m, n)), R, s, t, sigma_m, alpha_m, v_hat, init_W, y, var_i),
         None,
         length=num_iter,
     )
-    return (P, R, s, t, v_hat), varz
+    return (P, R, s, t, jax.lax.select(return_weights, W, v_hat)), varz

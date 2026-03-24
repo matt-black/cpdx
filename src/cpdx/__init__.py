@@ -45,6 +45,8 @@ def align(
     tolerance: float | None,
     regularization_param_nonrigid: float = 1.0,
     kernel_stddev_nonrigid: float = 1.0,
+    moving_weights: Float[Array, " m"] | None = None,
+    mask: Float[Array, "m n"] | None = None,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -60,6 +62,7 @@ def align(
         tolerance (float): tolerance for matching variance, below which the algorithm will terminate. If `None`, a fixed number of iterations is used.
         regularization_param_nonrigid (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
         kernel_stddev_nonrigid (float): standard deviation of Gaussian kernel function. only used if `method=nonrigid`.
+        mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
 
     Returns:
         tuple[TransformParams, tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, affine matrix, and translation) along with the final variance and the number of iterations that the algorithm was run for.
@@ -73,6 +76,8 @@ def align(
                 regularization_param_nonrigid,
                 kernel_stddev_nonrigid,
                 num_iter,
+                moving_weights=moving_weights,
+                mask=mask,
             )
         else:
             return align_nonrigid(
@@ -83,16 +88,48 @@ def align(
                 kernel_stddev_nonrigid,
                 num_iter,
                 tolerance,
+                moving_weights=moving_weights,
+                mask=mask,
             )
     elif method == "affine":
         if tolerance is None:
-            return align_fixed_iter_affine(ref, mov, outlier_prob, num_iter)
+            return align_fixed_iter_affine(
+                ref,
+                mov,
+                outlier_prob,
+                num_iter,
+                moving_weights=moving_weights,
+                mask=mask,
+            )
         else:
-            return align_affine(ref, mov, outlier_prob, num_iter, tolerance)
+            return align_affine(
+                ref,
+                mov,
+                outlier_prob,
+                num_iter,
+                tolerance,
+                moving_weights=moving_weights,
+                mask=mask,
+            )
     elif method == "rigid":
         if tolerance is None:
-            return align_fixed_iter_rigid(ref, mov, outlier_prob, num_iter)
+            return align_fixed_iter_rigid(
+                ref,
+                mov,
+                outlier_prob,
+                num_iter,
+                moving_weights=moving_weights,
+                mask=mask,
+            )
         else:
-            return align_rigid(ref, mov, outlier_prob, num_iter, tolerance)
+            return align_rigid(
+                ref,
+                mov,
+                outlier_prob,
+                num_iter,
+                tolerance,
+                moving_weights=moving_weights,
+                mask=mask,
+            )
     else:
         raise ValueError("invalid method")

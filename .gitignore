@@ -10,3 +10,5 @@ wheels/
 .venv
 
 .vscode
+
+.DS_Store

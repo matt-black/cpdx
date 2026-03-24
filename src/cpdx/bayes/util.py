@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
+from jaxtyping import Bool
 from jaxtyping import Float
 
 from .._matching import MatchingMatrix
@@ -20,6 +21,7 @@ __all__ = [
     "residual",
     "interpolate",
     "interpolate_covariance",
+    "invert_gp_mapping",
 ]
 
 
@@ -75,7 +77,7 @@ def initialize(
     alpha_m = jnp.ones((m,)) / m
     var = gamma * jnp.mean(d_t)
     G = jnp.clip(affinity_matrix(y, y, kernel, beta), jnp.finfo(x.dtype).eps)
-    sigma_m = jnp.ones_like(alpha_m)
+    sigma_m = jnp.full_like(alpha_m, 1e-4)
     return G, alpha_m, sigma_m, var
 
 
@@ -99,7 +101,7 @@ def transform(
     Notes:
         To apply the full BCPD transform, add the `VectorField` output to the points to transform before passing them into this function.
     """
-    return (R.T @ x.T).T * s + t
+    return s * (x @ R.T) + t
 
 
 def transform_inverse(
@@ -119,7 +121,7 @@ def transform_inverse(
     Returns:
         Float[Array, "n d"]: transformed points
     """
-    return transform(x - t[None, :], R, 1 / s, jnp.array(0.0))
+    return transform(x - t[None, :], R.T, 1 / s, jnp.array(0.0))
 
 
 def dimension_bounds(x: Float[Array, " n"]) -> Float[Array, " 2"]:
@@ -196,14 +198,13 @@ def interpolate_covariance(
     lambda_: float,
     var: float,
     eps: float = 1e-12,
-) -> Float[Array, "i d"]:
+) -> Float[Array, "i i"]:
     """Predict the covariance matrix between all interpolation points.
 
     Args:
         mov (Float[Array, "m d"]): points from moving point cloud
         interp (Float[Array, "i d"]): points to interpolate vectors at
-        resid (Float[Array, "m d"]): fitting residual
-        P (Float[Array, "n m"]): fitted matching matrix
+        P (Float[Array, "m n"]): fitted matching matrix
         G_mm (Float[Array, "m m"]): gram matrix between all pairs of points in moving point cloud
         kernel (KernelFunction): kernel function
         beta (float): shape parameter for kernel
@@ -219,4 +220,80 @@ def interpolate_covariance(
     psi = (lambda_ * var / s**2) * jnp.diag(1.0 / nu)
     G_im = affinity_matrix(interp, mov, kernel, beta)
     G_ii = affinity_matrix(interp, interp, kernel, beta)
-    return G_ii + psi - G_im @ jnp.linalg.inv(G_mm + psi) @ jnp.transpose(G_im)
+    return (1.0 / lambda_) * (
+        G_ii - G_im @ jnp.linalg.inv(G_mm + psi) @ jnp.transpose(G_im)
+    )
+
+
+def invert_gp_mapping(
+    y: Float[Array, "n d"],
+    mov: Float[Array, "m d"],
+    W: Float[Array, "m d"],
+    kernel: KernelFunction,
+    beta: float,
+    max_iter: int = 10,
+    tol: float = 1e-6,
+) -> Float[Array, "n d"]:
+    """Invert the GP mapping y = x + v(x) to find x using Newton-Raphson.
+
+    Args:
+        y (Float[Array, "n d"]): points to invert (target space)
+        mov (Float[Array, "m d"]): control points (moving point cloud)
+        W (Float[Array, "m d"]): fitted GP coefficients
+        kernel (KernelFunction): kernel function
+        beta (float): kernel shape parameter
+        max_iter (int): maximum number of Newton iterations
+        tol (float): convergence tolerance (mean squared change)
+
+    Returns:
+        Float[Array, "n d"]: inverted points x (source space)
+    """
+
+    def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
+        # v(x) = sum_j w_j K(x, y_j)
+        # x_point is (d,), mov is (m, d), W is (m, d)
+        # G is (1, m)
+        g = jax.vmap(lambda m: kernel(x_point[None, :], m[None, :], beta))(mov)
+        return g @ W
+
+    def h_func(
+        x_point: Float[Array, " d"], y_target: Float[Array, " d"]
+    ) -> Float[Array, " d"]:
+        return x_point + vector_field(x_point) - y_target
+
+    # Jacobian of h: J_h(x) = I + J_v(x)
+    jac_h = jax.jacfwd(h_func, argnums=0)
+
+    def newton_step(x_point: Float[Array, " d"], y_target: Float[Array, " d"]):
+        h = h_func(x_point, y_target)
+        J = jac_h(x_point, y_target)
+        # Newton update: x = x - inv(J) @ h
+        delta = jnp.linalg.solve(J, h)
+        return x_point - delta
+
+    # Vectorize the Newton step over the input points y
+    vmap_newton_step = jax.vmap(newton_step)
+
+    # Initial guess: x = y
+    # Initial diff set to a value larger than tol to ensure execution
+    init_val = (y, jnp.inf, 0)
+
+    def cond_fun(
+        state: tuple[Float[Array, "n d"], Float[Array, ""], int],
+    ) -> Bool:
+        _, diff, i = state
+        return jnp.logical_and(i < max_iter, diff > tol)
+
+    def body_fun(
+        state: tuple[Float[Array, "n d"], Float[Array, ""], int],
+    ) -> tuple[Float[Array, "n d"], Float[Array, ""], int]:
+        x_curr, _, i = state
+        x_next = vmap_newton_step(x_curr, y)
+        diff = jnp.sqrt(jnp.mean(jnp.square(x_next - x_curr)))
+        return x_next, diff, i + 1
+
+    x_final, _, _ = jax.lax.while_loop(
+        cond_fun, body_fun, init_val  # pyright: ignore[reportArgumentType]
+    )
+
+    return x_final
