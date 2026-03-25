@@ -21,6 +21,7 @@ from ..rigid import RotationMatrix
 from ..rigid import ScalingTerm
 from ..rigid import Translation
 from ._private import update_matching
+from ._private import update_matching_masked
 from ._private import update_nonrigid
 from ._private import update_rigid
 from ._private import update_variance
@@ -64,6 +65,7 @@ def align(
     normalize_input: bool = False,
     debias: bool = False,
     return_weights: bool = False,
+    mask: Float[Array, "m n"] | None = None,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -88,6 +90,9 @@ def align(
         normalize_input (bool): if True, inputs are normalized to zero mean and unit variance before alignment, and results are denormalized. Defaults to False.
         debias (bool): if True, includes a de-biasing term (average deformation uncertainty) in the rigid scale calculation. This can stabilize scale recovery in some cases but may cause collapse in others. Defaults to False.
         return_weights (bool): if True, returns the GP weights `W` instead of the deformation vectors `v` in the `TransformParams` tuple. Defaults to False.
+        mask (Float[Array, "m n"] | None): optional mask of shape `(m, n)` where nonzero entries indicate valid
+            (source_m, target_n) pairs. Zero entries are treated as impossible matches and excluded from the
+            E-step. If `None` (default), all pairs are considered valid.
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -147,6 +152,7 @@ def align(
             transform_mode,
             debias,
             return_weights,
+            mask,
         )
     else:
         (P, R, s, t, v), var = _align_tolerance(
@@ -169,6 +175,7 @@ def align(
             transform_mode,
             debias,
             return_weights,
+            mask,
         )
 
     # Denormalize if needed
@@ -210,6 +217,7 @@ def align_with_ic(
     normalize_input: bool = False,
     debias: bool = False,
     return_weights: bool = False,
+    mask: Float[Array, "m n"] | None = None,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -237,6 +245,9 @@ def align_with_ic(
         normalize_input (bool): if True, inputs are normalized to zero mean and unit variance before alignment, and results are denormalized. Defaults to False.
         debias (bool): if True, includes a de-biasing term in the rigid scale calculation. Defaults to False.
         return_weights (bool): if True, returns the GP weights `W` instead of the deformation vectors `v` in the `TransformParams` tuple. Defaults to False.
+        mask (Float[Array, "m n"] | None): optional mask of shape `(m, n)` where nonzero entries indicate valid
+            (source_m, target_n) pairs. Zero entries are treated as impossible matches and excluded from the
+            E-step. If `None` (default), all pairs are considered valid.
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -282,6 +293,7 @@ def align_with_ic(
             transform_mode,
             debias,
             return_weights,
+            mask,
         )
     else:
         (P, R, s, t, v), var = _align_fixed_iter(
@@ -303,6 +315,7 @@ def align_with_ic(
             transform_mode,
             debias,
             return_weights,
+            mask,
         )
 
     # Denormalize if needed
@@ -356,6 +369,7 @@ def _align_tolerance(
     transform_mode: str,
     debias: bool,
     return_weights: bool,
+    mask: Float[Array, "m n"] | None,
 ) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
     n, d = x.shape
     m, _ = y.shape
@@ -368,9 +382,14 @@ def _align_tolerance(
         # unpack
         _, R, s, t, sigma_m, alpha_m, v_hat, W, y_hat, var, iter_num = a
         # expectation step
-        P, nu, nu_prime, n_hat, x_hat = update_matching(
-            x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
-        )
+        if mask is not None:
+            P, nu, nu_prime, n_hat, x_hat = update_matching_masked(
+                x, y_hat, sigma_m, alpha_m, s, var, outlier_prob, mask
+            )
+        else:
+            P, nu, nu_prime, n_hat, x_hat = update_matching(
+                x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
+            )
 
         # maximization step depends on transform_mode
         if transform_mode == "rigid":
@@ -511,6 +530,7 @@ def _align_fixed_iter(
     transform_mode: str,
     debias: bool,
     return_weights: bool,
+    mask: Float[Array, "m n"] | None,
 ) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
     n, d = x.shape
     m, _ = y.shape
@@ -522,9 +542,14 @@ def _align_fixed_iter(
         # unpack the carry
         _, R, s, t, sigma_m, alpha_m, v_hat, W, y_hat, var = carry
         # update matching
-        P, nu, nu_prime, n_hat, x_hat = update_matching(
-            x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
-        )
+        if mask is not None:
+            P, nu, nu_prime, n_hat, x_hat = update_matching_masked(
+                x, y_hat, sigma_m, alpha_m, s, var, outlier_prob, mask
+            )
+        else:
+            P, nu, nu_prime, n_hat, x_hat = update_matching(
+                x, y_hat, sigma_m, alpha_m, s, var, outlier_prob
+            )
 
         # maximization step depends on transform_mode
         if transform_mode == "rigid":

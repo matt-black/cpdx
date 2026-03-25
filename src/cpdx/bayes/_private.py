@@ -20,6 +20,7 @@ from .util import transform_inverse as apply_Tinv
 
 __all__ = [
     "update_matching",
+    "update_matching_masked",
     "update_rigid",
     "update_nonrigid",
     "update_variance",
@@ -56,6 +57,74 @@ def update_matching(
     numer = (1 - outlier_prob) * m_term * gauss
     denom = jnp.add(
         outlier_prob / v,
+        (1 - outlier_prob) * jnp.sum(m_term * gauss, axis=0, keepdims=True),
+    )
+    p_mn = numer / denom
+    nu = jnp.clip(jnp.sum(p_mn, axis=1), eps)
+    nu_p = jnp.clip(jnp.sum(p_mn, axis=0), eps)
+    n_hat = jnp.sum(nu)
+    x_hat = jnp.diag(jnp.divide(1.0, nu)) @ p_mn @ x
+    return p_mn, nu, nu_p, n_hat, x_hat
+
+
+@Partial(jax.jit, static_argnums=(6,))
+def update_matching_masked(
+    x: Float[Array, "n d"],
+    y_hat: Float[Array, "m d"],
+    sigma_m: Float[Array, " m"],
+    alpha_m: Float[Array, " m"],
+    s: ScalingTerm,
+    var: Float[Array, ""],
+    outlier_prob: float,
+    mask: Float[Array, "m n"],
+) -> tuple[
+    MatchingMatrix,
+    Float[Array, " m"],
+    Float[Array, " n"],
+    Float[Array, ""],
+    Float[Array, "m d"],
+]:
+    """Do a single expectation step of the BCPD algorithm where only some (source, target) pairs
+    are considered valid matches.
+
+    Args:
+        x (Float[Array, "n d"]): target (reference) point set
+        y_hat (Float[Array, "m d"]): current estimate of transformed source points
+        sigma_m (Float[Array, " m"]): per-source-point deformation uncertainty (diagonal of GP posterior covariance)
+        alpha_m (Float[Array, " m"]): mixing coefficients (source point weights)
+        s (ScalingTerm): current isotropic scale factor
+        var (Float[Array, ""]): current residual variance estimate
+        outlier_prob (float): outlier probability, in range [0, 1]
+        mask (Float[Array, "m n"]): mask where nonzero entries indicate valid (source_m, target_n) matches;
+            zero entries are treated as impossible matches and excluded from the E-step.
+
+    Returns:
+        tuple: (p_mn, nu, nu_p, n_hat, x_hat) — matching matrix, row/column sums, total
+            effective count, and weighted mean of target points matched to each source.
+    """
+    n, d = x.shape
+    eps = jnp.finfo(x.dtype).eps
+    bnds = jax.vmap(dimension_bounds, 1, 1)(x)
+    v = jnp.prod(jnp.ptp(bnds))
+    d_t = sqdist(y_hat, x)
+    # m_term is shape (m, 1)
+    m_term = jnp.expand_dims(
+        alpha_m * jnp.exp(-(s**2) / (2 * var) * sigma_m * d), 1
+    )
+    # shape (m, n)
+    gauss = jnp.exp(jnp.negative(jnp.divide(d_t, 2 * var)))
+    # Zero out impossible (source, target) pairs
+    gauss = jnp.where(mask > 0, gauss, 0.0)
+    # Per-column: how many source points can match target n
+    n_mpr = jnp.sum(mask, axis=0, keepdims=True)  # (1, n)
+    n_msk = jnp.sum(mask)  # scalar: total valid pairs
+    # Rescale the outlier term per-column so that columns with fewer valid source
+    # candidates don't have an artificially inflated outlier probability.
+    # This mirrors the n_mpr / n_msk rescaling in CPD's expectation_masked.
+    outlier_scale = n_mpr / (n_msk / n)  # (1, n)
+    numer = (1 - outlier_prob) * m_term * gauss
+    denom = jnp.add(
+        outlier_prob / v * outlier_scale,
         (1 - outlier_prob) * jnp.sum(m_term * gauss, axis=0, keepdims=True),
     )
     p_mn = numer / denom
