@@ -9,6 +9,64 @@ from ._tree import build_tree
 from ._tree import query_neighbors
 
 
+def trim_with_mask(
+    ref: Float[Array, "n d"],
+    mov: Float[Array, "m d"],
+    mask: Float[Array, "m n"],
+) -> tuple[
+    Float[Array, "n_trimmed d"],
+    Float[Array, "m_trimmed d"],
+    Float[Array, "m_trimmed n_trimmed"],
+    Int[Array, " m_trimmed"],
+    Int[Array, " n_trimmed"],
+]:
+    """Remove unmatchable points from reference and moving point sets based on a binary mask.
+
+    A moving point is unmatchable if its corresponding row in the mask is all zeros
+    (no valid reference matches). A reference point is unmatchable if its corresponding
+    column in the mask is all zeros (no valid moving matches).
+
+    Args:
+        ref: Reference points of shape (n, d).
+        mov: Moving points of shape (m, d).
+        mask: Binary mask of shape (m, n) where nonzero entries indicate valid
+            (moving, reference) pairs.
+
+    Returns:
+        tuple containing:
+            - trimmed_ref: Reference points with unmatchable points removed (n_trimmed, d).
+            - trimmed_mov: Moving points with unmatchable points removed (m_trimmed, d).
+            - trimmed_mask: Mask with unmatchable rows and columns removed (m_trimmed, n_trimmed).
+            - mov_idx: Original indices of kept moving points (m_trimmed,).
+            - ref_idx: Original indices of kept reference points (n_trimmed,).
+
+    Raises:
+        ValueError: If trimming would remove all moving points or all reference points.
+    """
+    # Find moving points with at least one valid reference match
+    valid_mov = jnp.any(mask > 0, axis=1)  # (m,)
+    # Find reference points with at least one valid moving match
+    valid_ref = jnp.any(mask > 0, axis=0)  # (n,)
+
+    mov_idx = jnp.where(valid_mov)[0]  # (m_trimmed,)
+    ref_idx = jnp.where(valid_ref)[0]  # (n_trimmed,)
+
+    if len(mov_idx) == 0:
+        raise ValueError(
+            "trim_with_mask: all moving points are unmatchable (no valid pairs in mask)"
+        )
+    if len(ref_idx) == 0:
+        raise ValueError(
+            "trim_with_mask: all reference points are unmatchable (no valid pairs in mask)"
+        )
+
+    trimmed_ref = ref[ref_idx]
+    trimmed_mov = mov[mov_idx]
+    trimmed_mask = mask[mov_idx][:, ref_idx]
+
+    return trimmed_ref, trimmed_mov, trimmed_mask, mov_idx, ref_idx
+
+
 def sqdist(
     x: Float[Array, "n d"], y: Float[Array, "m d"]
 ) -> Float[Array, "n m"]:
