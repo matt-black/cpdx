@@ -21,7 +21,7 @@ __all__ = [
     "residual",
     "interpolate",
     "interpolate_covariance",
-    "invert_gp_mapping",
+    "invert_gp_bcpd_mapping",
 ]
 
 
@@ -225,34 +225,66 @@ def interpolate_covariance(
     )
 
 
-def invert_gp_mapping(
+def invert_gp_bcpd_mapping(
     y: Float[Array, "n d"],
     mov: Float[Array, "m d"],
-    W: Float[Array, "m d"],
+    resid: Float[Array, "m d"],
+    P: Float[Array, "n m"],
+    G_mm: Float[Array, "m m"],
     kernel: KernelFunction,
     beta: float,
-    max_iter: int = 10,
+    s: float,
+    lambda_: float,
+    var: float,
+    max_iter: int = 20,
     tol: float = 1e-6,
+    eps: float = 1e-12,
 ) -> Float[Array, "n d"]:
-    """Invert the GP mapping y = x + v(x) to find x using Newton-Raphson.
+    """Invert the BCPD GP mapping y = x + v(x) to find x.
+
+    The forward map v is the BCPD GP posterior mean:
+
+    .. code-block:: text
+
+        v(x) = G(x, mov) @ inv(G_mm + Psi) @ resid
+
+    where ``Psi = (lambda_ * var / s**2) * diag(1 / nu)`` and
+    ``nu = sum(P, axis=1)`` (clipped to avoid division by zero).
+
+    The inverse is found with Newton-Raphson iteration:
+
+    .. code-block:: text
+
+        x <- x - inv(I + J_v(x)) @ (x + v(x) - y)
+
+    This is consistent with :func:`interpolate` by construction: both
+    functions compute ``Psi`` from the same BCPD state variables, so the
+    forward model used here exactly matches the one used during registration.
 
     Args:
-        y (Float[Array, "n d"]): points to invert (target space)
-        mov (Float[Array, "m d"]): control points (moving point cloud)
-        W (Float[Array, "m d"]): fitted GP coefficients
-        kernel (KernelFunction): kernel function
-        beta (float): kernel shape parameter
-        max_iter (int): maximum number of Newton iterations
-        tol (float): convergence tolerance (mean squared change)
+        y (Float[Array, "n d"]): points in the target/deformed space to invert.
+        mov (Float[Array, "m d"]): control points (moving cloud), kernel evaluation sites.
+        resid (Float[Array, "m d"]): fitting residual at control points.
+        P (Float[Array, "n m"]): matching matrix from the BCPD E-step (n_ref x m_mov).
+        G_mm (Float[Array, "m m"]): Gram matrix between all pairs of control points.
+        kernel (KernelFunction): kernel function.
+        beta (float): kernel shape parameter.
+        s (float): fitted isotropic scaling term.
+        lambda_ (float): regularization parameter.
+        var (float): fitted noise variance at convergence.
+        max_iter (int, optional): maximum Newton iterations. Defaults to 20.
+        tol (float, optional): convergence tolerance (RMS change in x). Defaults to 1e-6.
+        eps (float, optional): small value to prevent division by zero in nu. Defaults to 1e-12.
 
     Returns:
-        Float[Array, "n d"]: inverted points x (source space)
+        Float[Array, "n d"]: inverted source-space points.
     """
+    # Build Psi and solve for GP weights W = inv(G_mm + Psi) @ resid
+    nu = jnp.clip(jnp.sum(P, axis=1), eps)  # (m,)
+    psi = (lambda_ * var / s**2) * jnp.diag(1.0 / nu)  # (m, m)
+    W = jnp.linalg.solve(G_mm + psi, resid)  # (m, d)
 
     def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
-        # v(x) = sum_j w_j K(x, y_j)
-        # x_point is (d,), mov is (m, d), W is (m, d)
-        # G is (1, m)
         g = jax.vmap(lambda m: kernel(x_point[None, :], m[None, :], beta))(mov)
         return g @ W
 
@@ -267,15 +299,11 @@ def invert_gp_mapping(
     def newton_step(x_point: Float[Array, " d"], y_target: Float[Array, " d"]):
         h = h_func(x_point, y_target)
         J = jac_h(x_point, y_target)
-        # Newton update: x = x - inv(J) @ h
-        delta = jnp.linalg.solve(J, h)
-        return x_point - delta
+        return x_point - jnp.linalg.solve(J, h)
 
-    # Vectorize the Newton step over the input points y
     vmap_newton_step = jax.vmap(newton_step)
 
-    # Initial guess: x = y
-    # Initial diff set to a value larger than tol to ensure execution
+    # Initial guess: x = y; diff seeded above tol to ensure at least one step
     init_val = (y, jnp.inf, 0)
 
     def cond_fun(

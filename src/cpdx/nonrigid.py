@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+from jax.tree_util import Partial
 from jaxtyping import Array
 from jaxtyping import Bool
 from jaxtyping import Float
@@ -20,6 +21,7 @@ __all__ = [
     "transform",
     "interpolate",
     "maximization",
+    "invert_gp_mapping",
 ]
 
 
@@ -273,3 +275,88 @@ def interpolate(
         jnp.negative(jnp.divide(sqdist(interp, mov), 2 * kernel_stddev**2))
     )
     return G_im @ W
+
+
+def invert_gp_mapping(
+    y: Float[Array, "n d"],
+    mov: Float[Array, "m d"],
+    W: Float[Array, "m d"],
+    beta: float,
+    max_iter: int = 10,
+    tol: float = 1e-6,
+) -> Float[Array, "n d"]:
+    """Invert the GP mapping y = x + v(x) to find x using Newton-Raphson.
+
+    Args:
+        y (Float[Array, "n d"]): points to invert (target space)
+        mov (Float[Array, "m d"]): control points (moving point cloud)
+        W (Float[Array, "m d"]): fitted GP coefficients
+        kernel (KernelFunction): kernel function
+        beta (float): kernel shape parameter
+        max_iter (int): maximum number of Newton iterations
+        tol (float): convergence tolerance (mean squared change)
+
+    Returns:
+        Float[Array, "n d"]: inverted points x (source space)
+    """
+
+    def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
+        # v(x) = sum_j w_j K(x, y_j)
+        # x_point is (d,), mov is (m, d), W is (m, d)
+        # G is (1, m)
+        g = jax.vmap(
+            lambda m: gaussian_kernel(x_point[None, :], m[None, :], beta)
+        )(mov)
+        return g @ W
+
+    def h_func(
+        x_point: Float[Array, " d"], y_target: Float[Array, " d"]
+    ) -> Float[Array, " d"]:
+        return x_point + vector_field(x_point) - y_target
+
+    # Jacobian of h: J_h(x) = I + J_v(x)
+    jac_h = jax.jacfwd(h_func, argnums=0)
+
+    def newton_step(x_point: Float[Array, " d"], y_target: Float[Array, " d"]):
+        h = h_func(x_point, y_target)
+        J = jac_h(x_point, y_target)
+        # Newton update: x = x - inv(J) @ h
+        delta = jnp.linalg.solve(J, h)
+        return x_point - delta
+
+    # Vectorize the Newton step over the input points y
+    vmap_newton_step = jax.vmap(newton_step)
+
+    # Initial guess: x = y
+    # Initial diff set to a value larger than tol to ensure execution
+    init_val = (y, jnp.inf, 0)
+
+    def cond_fun(
+        state: tuple[Float[Array, "n d"], Float[Array, ""], int],
+    ) -> Bool:
+        _, diff, i = state
+        return jnp.logical_and(i < max_iter, diff > tol)
+
+    def body_fun(
+        state: tuple[Float[Array, "n d"], Float[Array, ""], int],
+    ) -> tuple[Float[Array, "n d"], Float[Array, ""], int]:
+        x_curr, _, i = state
+        x_next = vmap_newton_step(x_curr, y)
+        diff = jnp.sqrt(jnp.mean(jnp.square(x_next - x_curr)))
+        return x_next, diff, i + 1
+
+    x_final, _, _ = jax.lax.while_loop(
+        cond_fun, body_fun, init_val  # pyright: ignore[reportArgumentType]
+    )
+
+    return x_final
+
+
+@Partial(jax.jit, static_argnums=(2,))
+def gaussian_kernel(
+    a: Float[Array, "1 d"],
+    b: Float[Array, "1 d"],
+    beta: float,
+) -> Float[Array, ""]:
+    d = jnp.sum(jnp.square(jnp.subtract(a, b)))
+    return jnp.exp(jnp.negative(jnp.divide(d, 2 * beta)))

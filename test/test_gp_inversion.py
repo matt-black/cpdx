@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 
 from cpdx.bayes.kernel import gaussian_kernel
-from cpdx.bayes.util import invert_gp_mapping
+from cpdx.nonrigid import invert_gp_mapping
 
 
 def test_gp_inversion_simple():
@@ -30,7 +30,7 @@ def test_gp_inversion_simple():
 
     # Invert mapping
     x_recovered = invert_gp_mapping(
-        y_target, mov, W, gaussian_kernel, beta, max_iter=20, tol=1e-7
+        y_target, mov, W, beta, max_iter=20, tol=1e-7
     )
 
     print("\nTrue x:\n", x_true)
