@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from jax.tree_util import Partial
+
 from jaxtyping import Array
 from jaxtyping import Bool
 from jaxtyping import Float
@@ -281,31 +281,39 @@ def invert_gp_mapping(
     y: Float[Array, "n d"],
     mov: Float[Array, "m d"],
     W: Float[Array, "m d"],
-    beta: float,
+    kernel_stddev: float,
     max_iter: int = 10,
     tol: float = 1e-6,
 ) -> Float[Array, "n d"]:
     """Invert the GP mapping y = x + v(x) to find x using Newton-Raphson.
 
+    The forward map is ``T(z) = z + G(z, mov) @ W`` where the kernel is the
+    same Gaussian used throughout this module:
+    ``K(a, b) = exp(-‖a - b‖² / (2 * kernel_stddev²))``.
+
     Args:
-        y (Float[Array, "n d"]): points to invert (target space)
-        mov (Float[Array, "m d"]): control points (moving point cloud)
-        W (Float[Array, "m d"]): fitted GP coefficients
-        kernel (KernelFunction): kernel function
-        beta (float): kernel shape parameter
-        max_iter (int): maximum number of Newton iterations
-        tol (float): convergence tolerance (mean squared change)
+        y (Float[Array, "n d"]): points to invert (target/deformed space).
+        mov (Float[Array, "m d"]): control points (moving point cloud used during fitting).
+        W (Float[Array, "m d"]): fitted GP weight matrix (from :func:`maximization` / :func:`align`).
+        kernel_stddev (float): standard deviation of the Gaussian kernel — must match the value used during registration.
+        max_iter (int, optional): maximum number of Newton iterations. Defaults to 10.
+        tol (float, optional): convergence tolerance (RMS change in x). Defaults to 1e-6.
 
     Returns:
-        Float[Array, "n d"]: inverted points x (source space)
+        Float[Array, "n d"]: inverted points x (source space).
     """
 
     def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
-        # v(x) = sum_j w_j K(x, y_j)
-        # x_point is (d,), mov is (m, d), W is (m, d)
-        # G is (1, m)
+        # K(x, yj) = exp(-||x - yj||^2 / (2 * kernel_stddev^2))
         g = jax.vmap(
-            lambda m: gaussian_kernel(x_point[None, :], m[None, :], beta)
+            lambda m: jnp.exp(
+                jnp.negative(
+                    jnp.divide(
+                        jnp.sum(jnp.square(jnp.subtract(x_point, m))),
+                        2 * kernel_stddev**2,
+                    )
+                )
+            )
         )(mov)
         return g @ W
 
@@ -350,13 +358,3 @@ def invert_gp_mapping(
     )
 
     return x_final
-
-
-@Partial(jax.jit, static_argnums=(2,))
-def gaussian_kernel(
-    a: Float[Array, "1 d"],
-    b: Float[Array, "1 d"],
-    beta: float,
-) -> Float[Array, ""]:
-    d = jnp.sum(jnp.square(jnp.subtract(a, b)))
-    return jnp.exp(jnp.negative(jnp.divide(d, 2 * beta)))
