@@ -20,7 +20,7 @@ def test_nonrigid_cpd_deformable_match():
     ref_y = jnp.sin(x * jnp.pi)
     ref = jnp.stack([x, ref_y], axis=1)
 
-    beta = 0.5
+    kernel_var = 0.25
     lmbda = 10.0
 
     (P, G, W), _ = align(
@@ -28,7 +28,7 @@ def test_nonrigid_cpd_deformable_match():
         mov=mov,
         outlier_prob=0.0,
         regularization_param=lmbda,
-        kernel_stddev=beta,
+        kernel_var=kernel_var,
         max_iter=100,
         tolerance=1e-5,
     )
@@ -47,24 +47,24 @@ def test_nonrigid_cpd_interpolation():
 
     mov = jax.random.normal(key_mov, (n, d))
 
-    beta = 1.0
+    kernel_var = 1.0
     W = jax.random.normal(key_W, (n, d)) * 0.1
 
     interp_pts = mov
 
-    G = jnp.exp(-sqdist(mov, mov) / (2 * beta**2))
+    G = jnp.exp(-sqdist(mov, mov) / (2 * kernel_var))
 
     transformed = transform(mov, G, W)
     displacement = transformed - mov
 
-    interpolated_displacement = interpolate(mov, interp_pts, W, beta)
+    interpolated_displacement = interpolate(mov, interp_pts, W, kernel_var)
 
     assert jnp.allclose(displacement, interpolated_displacement, atol=1e-5)
 
     new_pts = jax.random.normal(key_new, (5, d))
-    interp_new = interpolate(mov, new_pts, W, beta)
+    interp_new = interpolate(mov, new_pts, W, kernel_var)
 
-    G_new = jnp.exp(-sqdist(new_pts, mov) / (2 * beta**2))
+    G_new = jnp.exp(-sqdist(new_pts, mov) / (2 * kernel_var))
     expected_new = G_new @ W
 
     assert jnp.allclose(interp_new, expected_new, atol=1e-5)

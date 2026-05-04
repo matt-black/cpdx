@@ -11,18 +11,18 @@ def test_gp_inversion_simple():
     # Setup coefficients (some displacement)
     W = jnp.array([[0.1, 0.1], [-0.1, 0.0], [0.0, -0.1], [0.05, 0.05]])
 
-    kernel_stddev = 1.0
+    kernel_var = 1.0
 
     # Points in source space
     x_true = jnp.array([[0.5, 0.5], [0.2, 0.8], [0.7, 0.3]])
 
     # Forward mapping: T(x) = x + G(x, mov) @ W
-    # using the same Gaussian kernel as registration: exp(-||a-b||^2 / (2 * kernel_stddev^2))
+    # using the same Gaussian kernel as registration: exp(-||a-b||^2 / (2 * kernel_var))
     def forward(x_pts):
         G = jax.vmap(
             lambda x: jax.vmap(
                 lambda y: jnp.exp(
-                    -jnp.sum(jnp.square(x - y)) / (2 * kernel_stddev**2)
+                    -jnp.sum(jnp.square(x - y)) / (2 * kernel_var)
                 )
             )(mov)
         )(x_pts)
@@ -32,7 +32,7 @@ def test_gp_inversion_simple():
 
     # Invert mapping
     x_recovered = invert_gp_mapping(
-        y_target, mov, W, kernel_stddev, max_iter=20, tol=1e-7
+        y_target, mov, W, kernel_var, max_iter=20, tol=1e-7
     )
 
     print("\nTrue x:\n", x_true)

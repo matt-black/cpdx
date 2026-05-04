@@ -67,7 +67,7 @@ def test_weighted_nonrigid_nonuniform_weights():
         mov,
         outlier_prob=0.1,
         regularization_param=1.0,
-        kernel_stddev=1.0,
+        kernel_var=1.0,
         num_iter=3,
         moving_weights=weights1,
     )
@@ -79,7 +79,7 @@ def test_weighted_nonrigid_nonuniform_weights():
         mov,
         outlier_prob=0.1,
         regularization_param=1.0,
-        kernel_stddev=1.0,
+        kernel_var=1.0,
         num_iter=3,
         moving_weights=weights2,
     )

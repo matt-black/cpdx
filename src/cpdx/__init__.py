@@ -44,7 +44,7 @@ def align(
     num_iter: int,
     tolerance: float | None,
     regularization_param_nonrigid: float = 1.0,
-    kernel_stddev_nonrigid: float = 1.0,
+    kernel_var_nonrigid: float = 1.0,
     moving_weights: Float[Array, " m"] | None = None,
     mask: Float[Array, "m n"] | None = None,
 ) -> tuple[
@@ -61,7 +61,7 @@ def align(
         num_iter (int): maximum # of iterations to optimize for. if tolerance is `None`, this is the number of iterations that will be optimized for.
         tolerance (float): tolerance for matching variance, below which the algorithm will terminate. If `None`, a fixed number of iterations is used.
         regularization_param_nonrigid (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
-        kernel_stddev_nonrigid (float): standard deviation of Gaussian kernel function. only used if `method=nonrigid`.
+        kernel_var_nonrigid (float): variance of Gaussian kernel function. only used if `method=nonrigid`.
         mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
 
     Returns:
@@ -74,7 +74,7 @@ def align(
                 mov,
                 outlier_prob,
                 regularization_param_nonrigid,
-                kernel_stddev_nonrigid,
+                kernel_var_nonrigid,
                 num_iter,
                 moving_weights=moving_weights,
                 mask=mask,
@@ -85,7 +85,7 @@ def align(
                 mov,
                 outlier_prob,
                 regularization_param_nonrigid,
-                kernel_stddev_nonrigid,
+                kernel_var_nonrigid,
                 num_iter,
                 tolerance,
                 moving_weights=moving_weights,

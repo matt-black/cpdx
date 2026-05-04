@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-
 from jaxtyping import Array
 from jaxtyping import Bool
 from jaxtyping import Float
@@ -35,7 +34,7 @@ def align(
     mov: Float[Array, "m d"],
     outlier_prob: float,
     regularization_param: float,
-    kernel_stddev: float,
+    kernel_var: float,
     max_iter: int,
     tolerance: float,
     moving_weights: Float[Array, " m"] | None = None,
@@ -48,7 +47,7 @@ def align(
         mov (Float[Array, "m d"]): moving points
         outlier_prob (float): outlier probability, should be in range [0,1].
         regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
-        kernel_stddev (float): standard deviation of Gaussian kernel function.
+        kernel_var (float): variance of Gaussian kernel function.
         max_iter (int): maximum # of iterations to optimize for.
         tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
         moving_weights (Float[Array, " m"] | None): optional per-point weights for source points (arbitrary positive values). If None, uniform weights are used.
@@ -63,9 +62,7 @@ def align(
     var_i = jnp.sum(sqdist(ref, mov)) / (m * n * d)
 
     # compute gaussian kernel matrix
-    G = jnp.exp(
-        jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_stddev**2))
-    )
+    G = jnp.exp(jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_var)))
 
     def cond_fund(
         a: tuple[
@@ -112,7 +109,7 @@ def align_fixed_iter(
     mov: Float[Array, "m d"],
     outlier_prob: float,
     regularization_param: float,
-    kernel_stddev: float,
+    kernel_var: float,
     num_iter: int,
     moving_weights: Float[Array, " m"] | None = None,
     mask: Float[Array, "m n"] | None = None,
@@ -124,7 +121,7 @@ def align_fixed_iter(
         mov (Float[Array, "m d"]): moving points
         outlier_prob (float): outlier probability, should be in range [0,1].
         regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
-        kernel_stddev (float): standard deviation of Gaussian kernel function.
+        kernel_var (float): variance of Gaussian kernel function.
         num_iter (int): # of iterations to optimize for.
         moving_weights (Float[Array, " m"] | None): optional per-point weights for source points (arbitrary positive values). If None, uniform weights are used.
         mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
@@ -135,9 +132,7 @@ def align_fixed_iter(
     n, d = ref.shape
     m, _ = mov.shape
     # compute gaussian kernel
-    G = jnp.exp(
-        jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_stddev**2))
-    )
+    G = jnp.exp(jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_var)))
     var_i = (jnp.sum(sqdist(ref, mov)) / (m * n * d)).item()
 
     def scan_fun(
@@ -254,7 +249,7 @@ def interpolate(
     mov: Float[Array, "m d"],
     interp: Float[Array, "n d"],
     W: Float[Array, "m d"],
-    kernel_stddev: float,
+    kernel_var: float,
 ) -> Float[Array, "n d"]:
     """Interpolate values of vector field at points outside of the original fit domain.
 
@@ -262,7 +257,7 @@ def interpolate(
         mov (Float[Array, "m d"]): "moving" point cloud that was aligned
         interp (Float[Array, "n d"]): points to interpolate
         W (Float[Array, "m d"]): fitted transform coefficients
-        kernel_stddev (float): standard deviation of kernel
+        kernel_var (float): variance of kernel
 
     Returns:
         Float[Array, "n d"]: interpolated vector values at specified points
@@ -272,7 +267,7 @@ def interpolate(
     """
     # calculate kernel matrix b/t moving & interpolating points
     G_im = jnp.exp(
-        jnp.negative(jnp.divide(sqdist(interp, mov), 2 * kernel_stddev**2))
+        jnp.negative(jnp.divide(sqdist(interp, mov), 2 * kernel_var))
     )
     return G_im @ W
 
@@ -281,7 +276,7 @@ def invert_gp_mapping(
     y: Float[Array, "n d"],
     mov: Float[Array, "m d"],
     W: Float[Array, "m d"],
-    kernel_stddev: float,
+    kernel_var: float,
     max_iter: int = 10,
     tol: float = 1e-6,
 ) -> Float[Array, "n d"]:
@@ -289,13 +284,13 @@ def invert_gp_mapping(
 
     The forward map is ``T(z) = z + G(z, mov) @ W`` where the kernel is the
     same Gaussian used throughout this module:
-    ``K(a, b) = exp(-‖a - b‖² / (2 * kernel_stddev²))``.
+    ``K(a, b) = exp(-‖a - b‖² / (2 * kernel_var))``.
 
     Args:
         y (Float[Array, "n d"]): points to invert (target/deformed space).
         mov (Float[Array, "m d"]): control points (moving point cloud used during fitting).
         W (Float[Array, "m d"]): fitted GP weight matrix (from :func:`maximization` / :func:`align`).
-        kernel_stddev (float): standard deviation of the Gaussian kernel — must match the value used during registration.
+        kernel_var (float): variance of the Gaussian kernel — must match the value used during registration.
         max_iter (int, optional): maximum number of Newton iterations. Defaults to 10.
         tol (float, optional): convergence tolerance (RMS change in x). Defaults to 1e-6.
 
@@ -304,13 +299,13 @@ def invert_gp_mapping(
     """
 
     def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
-        # K(x, yj) = exp(-||x - yj||^2 / (2 * kernel_stddev^2))
+        # K(x, yj) = exp(-||x - yj||^2 / (2 * kernel_var))
         g = jax.vmap(
             lambda m: jnp.exp(
                 jnp.negative(
                     jnp.divide(
                         jnp.sum(jnp.square(jnp.subtract(x_point, m))),
-                        2 * kernel_stddev**2,
+                        2 * kernel_var,
                     )
                 )
             )
