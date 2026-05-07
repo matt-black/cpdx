@@ -15,10 +15,14 @@ __all__ = [
     "KernelMatrix",
     "CoeffMatrix",
     "TransformParams",
+    "PointVariance",
+    "InverseCovariance",
     "align",
     "align_fixed_iter",
     "transform",
     "interpolate",
+    "interpolate_variance",
+    "interpolate_variance_inverse",
     "maximization",
     "invert_gp_mapping",
 ]
@@ -27,6 +31,8 @@ __all__ = [
 type KernelMatrix = Float[Array, "m m"]
 type CoeffMatrix = Float[Array, "m d"]
 type TransformParams = tuple[MatchingMatrix, KernelMatrix, CoeffMatrix]
+type PointVariance = Float[Array, " n"]
+type InverseCovariance = Float[Array, "n d d"]
 
 
 def align(
@@ -272,6 +278,259 @@ def interpolate(
     return G_im @ W
 
 
+def interpolate_variance(
+    mov: Float[Array, "m d"],
+    interp: Float[Array, "n d"],
+    P: MatchingMatrix,
+    G: KernelMatrix,
+    kernel_var: float,
+    regularization_param: float,
+    var: float,
+    method: str = "cholesky",
+    rank: int | None = None,
+    eps: float = 1e-3,
+) -> PointVariance:
+    """Compute posterior variance of the interpolated displacement field.
+
+    Under the empirical Bayes approximation, the posterior precision matrix for
+    the coefficient weights is ``H = (1/sigma^2) * G * D * G + lambda * G``,
+    where ``D = diag(sum(P, axis=1))``. The per-coordinate variance at a query
+    point ``z`` is ``sigma_v^2(z) = k(z)^T H^{-1} k(z)``.
+
+    Args:
+        mov: Moving point cloud from alignment (m, d).
+        interp: Query points for interpolation (n, d).
+        P: Posterior probability matrix from alignment (m, n_ref).
+        G: Gram matrix between moving points (m, m).
+        kernel_var: Gaussian kernel width parameter beta^2.
+        regularization_param: Regularization parameter lambda.
+        var: Converged variance sigma^2 from alignment.
+        method: Numerical method -- "cholesky" or "low_rank".
+        rank: Rank K for low-rank approximation (default: auto-select as min(100, m)).
+        eps: Small nugget added to H for numerical stability.
+
+    Returns:
+        PointVariance: Per-point, per-coordinate posterior variance sigma_v^2(z) of shape (n,).
+
+    Notes:
+        The variance is isotropic across output dimensions. For a D-dimensional
+        problem, the total variance at point z_i is D * sigma_v^2(z_i).
+    """
+    m = mov.shape[0]
+    nu = jnp.sum(P, axis=1)  # (m,) effective matching counts
+
+    # Cross-kernel matrix between interpolation and moving points
+    G_im = jnp.exp(
+        jnp.negative(jnp.divide(sqdist(interp, mov), 2 * kernel_var))
+    )  # (n, m)
+
+    if method == "cholesky":
+        return _interpolate_variance_cholesky(
+            G, nu, G_im, var, regularization_param, eps
+        )
+    elif method == "low_rank":
+        K = rank or min(100, m)
+        return _interpolate_variance_low_rank(
+            G, nu, G_im, var, regularization_param, K, eps
+        )
+    else:
+        raise ValueError(
+            f"Unknown method '{method}'. Use 'cholesky' or 'low_rank'."
+        )
+
+
+def _interpolate_variance_cholesky(
+    G: KernelMatrix,
+    nu: Float[Array, " m"],
+    G_im: Float[Array, "n m"],
+    var: float,
+    regularization_param: float,
+    eps: float,
+) -> PointVariance:
+    """Cholesky-based computation of interpolation variance.
+
+    Forms H = (1/var) * G * diag(nu) * G + lambda * G + eps * I,
+    computes Cholesky factor L, then solves L @ Y^T = G_im^T.
+    Variance is row-wise squared norm of Y.
+    """
+    m = G.shape[0]
+    # H = (1/var) * G @ diag(nu) @ G + lambda * G + eps * I
+    # G @ diag(nu) scales rows of the result: (G * nu[:, None]) @ G
+    # Equivalently: G @ (diag(nu) @ G) where diag(nu) @ G scales rows of G
+    GDG = G @ (nu[:, None] * G)
+    H = (1.0 / var) * GDG + regularization_param * G
+    H = H + eps * jnp.eye(m)
+    L = jnp.linalg.cholesky(H)
+    # Solve L @ Y^T = G_im^T  =>  Y^T = L^{-1} @ G_im^T
+    Y_T = jnp.linalg.solve(L, G_im.T)  # (m, n)
+    # sigma_v^2(z_i) = ||y_i||^2 where y_i is the i-th column of Y^T
+    variance = jnp.sum(Y_T * Y_T, axis=0)  # (n,)
+    return jnp.maximum(variance, 0.0)
+
+
+def _interpolate_variance_low_rank(
+    G: KernelMatrix,
+    nu: Float[Array, " m"],
+    G_im: Float[Array, "n m"],
+    var: float,
+    regularization_param: float,
+    K: int,
+    eps: float = 1e-3,
+) -> PointVariance:
+    """Low-rank computation of interpolation variance.
+
+    Uses truncated eigendecomposition G ~ Q * Lambda * Q^T with K << M,
+    projects H into the low-rank basis, and solves in K-dimensional space.
+
+    H_K = (1/sigma^2) * Lambda * M_K * Lambda + lambda * Lambda + eps * I
+    where M_K = Q^T * diag(nu) * Q
+    Then sigma_v^2(z) = k_tilde^T * H_K^{-1} * k_tilde
+    where k_tilde = G_im @ Q
+    """
+    m = G.shape[0]
+    K = min(K, m)
+
+    # Truncated eigendecomposition
+    eigenvalues, eigenvectors = jnp.linalg.eigh(G)  # (m,), (m, m)
+    # Take K largest eigenvalues
+    idx = jnp.argsort(eigenvalues)[::-1][:K]
+    eigvals_K = eigenvalues[idx]  # (K,)
+    Q = eigenvectors[:, idx]  # (m, K)
+
+    # M_K = Q^T * diag(nu) * Q  =>  (K, K)
+    M_K = Q.T @ (nu[:, None] * Q)
+
+    # H_K = (1/var) * Lambda * M_K * Lambda + lambda * Lambda + eps * I  =>  (K, K)
+    Lambda = jnp.diag(eigvals_K)
+    H_K = (
+        (1.0 / var) * Lambda @ M_K @ Lambda
+        + regularization_param * Lambda
+        + eps * jnp.eye(K)
+    )
+
+    # k_tilde = G_im @ Q  =>  (n, K)
+    k_tilde = G_im @ Q
+
+    # Solve H_K @ alpha = k_tilde^T for each query point
+    alpha = jnp.linalg.solve(H_K, k_tilde.T)  # (K, n)
+
+    # sigma_v^2(z_i) = k_tilde[i] @ alpha[:, i]
+    variance = jnp.sum(k_tilde * alpha.T, axis=1)  # (n,)
+    return jnp.maximum(variance, 0.0)
+
+
+def _jacobian_forward(
+    z: Float[Array, " n d"],
+    mov: Float[Array, "m d"],
+    W: CoeffMatrix,
+    kernel_var: float,
+) -> Float[Array, "n d d"]:
+    """Compute the Jacobian of the forward transformation T(z) = z + v(z).
+
+    J_T(z) = I_D + sum_m w_m * grad_k_m(z)^T
+    where grad_k_m(z) = -(1/beta^2) * G(z, y_m) * (z - y_m).
+
+    Args:
+        z: Query points (n, d).
+        mov: Moving (control) points (m, d).
+        W: Fitted coefficient matrix (m, d).
+        kernel_var: Gaussian kernel width parameter beta^2.
+
+    Returns:
+        Float[Array, "n d d"]: Jacobian matrices J_T(z_i) for each query point.
+    """
+    d = z.shape[1]
+
+    def _jacobian_single(z_i):
+        """Compute J_T for a single query point."""
+        diff = z_i[None, :] - mov  # (m, d)
+        k = jnp.exp(-jnp.sum(diff**2, axis=1) / (2 * kernel_var))  # (m,)
+        grad_k = -(1.0 / kernel_var) * k[:, None] * diff  # (m, d)
+        return jnp.eye(d) + W.T @ grad_k  # (d, d)
+
+    return jax.vmap(_jacobian_single)(z)  # (n, d, d)
+
+
+def _invert_with_jacobian(
+    y: Float[Array, "n d"],
+    mov: Float[Array, "m d"],
+    W: CoeffMatrix,
+    kernel_var: float,
+    max_iter: int = 10,
+    tol: float = 1e-6,
+) -> tuple[Float[Array, "n d"], Float[Array, "n d d"]]:
+    """Invert the GP mapping and return both inverted points and final Jacobians.
+
+    Args:
+        y: Points to invert (target/deformed space) (n, d).
+        mov: Control points (moving point cloud) (m, d).
+        W: Fitted GP weight matrix (m, d).
+        kernel_var: Variance of the Gaussian kernel.
+        max_iter: Maximum number of Newton iterations.
+        tol: Convergence tolerance (RMS change in x).
+
+    Returns:
+        tuple[Float[Array, "n d"], Float[Array, "n d d"]]:
+            - inverted_points: Source-space points x (n, d).
+            - jacobians: Forward Jacobian J_T(x) evaluated at each inverted point (n, d, d).
+    """
+
+    def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
+        g = jax.vmap(
+            lambda m: jnp.exp(
+                jnp.negative(
+                    jnp.divide(
+                        jnp.sum(jnp.square(jnp.subtract(x_point, m))),
+                        2 * kernel_var,
+                    )
+                )
+            )
+        )(mov)
+        return g @ W
+
+    def h_func(
+        x_point: Float[Array, " d"], y_target: Float[Array, " d"]
+    ) -> Float[Array, " d"]:
+        return x_point + vector_field(x_point) - y_target
+
+    def newton_step(x_point: Float[Array, " d"], y_target: Float[Array, " d"]):
+        h = h_func(x_point, y_target)
+        # Use closed-form Jacobian: J_T = I + W^T @ grad_k
+        J = _jacobian_forward(x_point[None, :], mov, W, kernel_var)[0]
+        delta = jnp.linalg.solve(J, h)
+        return x_point - delta, J
+
+    vmap_newton_step = jax.vmap(newton_step)
+
+    init_val = (y, jnp.inf, 0, jnp.zeros((y.shape[0], y.shape[1], y.shape[1])))
+
+    def cond_fun(
+        state: tuple[
+            Float[Array, "n d"], Float[Array, ""], int, Float[Array, "n d d"]
+        ],
+    ) -> Bool:
+        _, diff, i, _ = state
+        return jnp.logical_and(i < max_iter, diff > tol)
+
+    def body_fun(
+        state: tuple[
+            Float[Array, "n d"], Float[Array, ""], int, Float[Array, "n d d"]
+        ],
+    ) -> tuple[
+        Float[Array, "n d"], Float[Array, ""], int, Float[Array, "n d d"]
+    ]:
+        x_curr, _, i, _ = state
+        x_next, J_final = vmap_newton_step(x_curr, y)
+        diff = jnp.sqrt(jnp.mean(jnp.square(x_next - x_curr)))
+        return x_next, diff, i + 1, J_final
+
+    x_final, _, _, J_final = jax.lax.while_loop(
+        cond_fun, body_fun, init_val  # pyright: ignore[reportArgumentType]
+    )
+
+    return x_final, J_final
+
+
 def invert_gp_mapping(
     y: Float[Array, "n d"],
     mov: Float[Array, "m d"],
@@ -297,59 +556,93 @@ def invert_gp_mapping(
     Returns:
         Float[Array, "n d"]: inverted points x (source space).
     """
+    x_final, _ = _invert_with_jacobian(y, mov, W, kernel_var, max_iter, tol)
+    return x_final
 
-    def vector_field(x_point: Float[Array, " d"]) -> Float[Array, " d"]:
-        # K(x, yj) = exp(-||x - yj||^2 / (2 * kernel_var))
-        g = jax.vmap(
-            lambda m: jnp.exp(
-                jnp.negative(
-                    jnp.divide(
-                        jnp.sum(jnp.square(jnp.subtract(x_point, m))),
-                        2 * kernel_var,
-                    )
-                )
-            )
-        )(mov)
-        return g @ W
 
-    def h_func(
-        x_point: Float[Array, " d"], y_target: Float[Array, " d"]
-    ) -> Float[Array, " d"]:
-        return x_point + vector_field(x_point) - y_target
+def interpolate_variance_inverse(
+    mov: Float[Array, "m d"],
+    target: Float[Array, "n d"],
+    P: MatchingMatrix,
+    G: KernelMatrix,
+    W: CoeffMatrix,
+    kernel_var: float,
+    regularization_param: float,
+    var: float,
+    method: str = "cholesky",
+    rank: int | None = None,
+    eps: float = 1e-3,
+    inv_max_iter: int = 10,
+    inv_tol: float = 1e-6,
+) -> tuple[Float[Array, "n d"], InverseCovariance]:
+    """Compute covariance of the inverse transformation at target points.
 
-    # Jacobian of h: J_h(x) = I + J_v(x)
-    jac_h = jax.jacfwd(h_func, argnums=0)
+    For each target point ``x``, finds the source point ``z*`` such that
+    ``T(z*) = x``, then computes the covariance of ``z*`` using the
+    delta method:
 
-    def newton_step(x_point: Float[Array, " d"], y_target: Float[Array, " d"]):
-        h = h_func(x_point, y_target)
-        J = jac_h(x_point, y_target)
-        # Newton update: x = x - inv(J) @ h
-        delta = jnp.linalg.solve(J, h)
-        return x_point - delta
+    ``Cov[z*] = sigma_v^2(z_hat) * J_T(z_hat)^{-1} * J_T(z_hat)^{-T}``
 
-    # Vectorize the Newton step over the input points y
-    vmap_newton_step = jax.vmap(newton_step)
+    where ``J_T`` is the Jacobian of the forward transformation and
+    ``sigma_v^2`` is the forward displacement variance.
 
-    # Initial guess: x = y
-    # Initial diff set to a value larger than tol to ensure execution
-    init_val = (y, jnp.inf, 0)
+    Args:
+        mov: Moving point cloud from alignment (m, d).
+        target: Target points in deformed space (n, d).
+        P: Posterior probability matrix from alignment (m, n_ref).
+        G: Gram matrix between moving points (m, m).
+        W: Fitted coefficient matrix (m, d).
+        kernel_var: Gaussian kernel width parameter beta^2.
+        regularization_param: Regularization parameter lambda.
+        var: Converged variance sigma^2 from alignment.
+        method: Numerical method for variance -- "cholesky" or "low_rank".
+        rank: Rank K for low-rank approximation (default: auto-select).
+        eps: Small nugget added to H for numerical stability.
+        inv_max_iter: Maximum Newton iterations for inversion.
+        inv_tol: Convergence tolerance for inversion.
 
-    def cond_fun(
-        state: tuple[Float[Array, "n d"], Float[Array, ""], int],
-    ) -> Bool:
-        _, diff, i = state
-        return jnp.logical_and(i < max_iter, diff > tol)
+    Returns:
+        tuple[Float[Array, "n d"], InverseCovariance]:
+            - inverted_points: Source-space points z* for each target (n, d).
+            - inverse_covariance: Covariance matrix for each inverted point (n, d, d).
 
-    def body_fun(
-        state: tuple[Float[Array, "n d"], Float[Array, ""], int],
-    ) -> tuple[Float[Array, "n d"], Float[Array, ""], int]:
-        x_curr, _, i = state
-        x_next = vmap_newton_step(x_curr, y)
-        diff = jnp.sqrt(jnp.mean(jnp.square(x_next - x_curr)))
-        return x_next, diff, i + 1
-
-    x_final, _, _ = jax.lax.while_loop(
-        cond_fun, body_fun, init_val  # pyright: ignore[reportArgumentType]
+    Notes:
+        When the forward map is locally rigid (J_T ≈ I), the inverse
+        covariance is approximately isotropic: ``Cov[z*] ≈ sigma_v^2 * I_D``.
+        Under strong compression or shearing, the covariance becomes
+        anisotropic, amplified along directions where the forward map
+        contracts.
+    """
+    # Step 1: Invert the MAP field, getting both points and Jacobians
+    z_hat, J_T = _invert_with_jacobian(
+        target, mov, W, kernel_var, inv_max_iter, inv_tol
     )
 
-    return x_final
+    # Step 2: Compute forward variance at the inverted points
+    sigma_v_sq = interpolate_variance(
+        mov,
+        z_hat,
+        P,
+        G,
+        kernel_var,
+        regularization_param,
+        var,
+        method,
+        rank,
+        eps,
+    )  # (n,)
+
+    # Step 3: Form inverse covariance: Cov = sigma_v^2 * J^{-1} * J^{-T}
+    # Solve J_T @ M = I for M = J_T^{-1}, then Cov = sigma_v^2 * M @ M^T
+    d = target.shape[1]
+    I_d = jnp.eye(d)
+
+    def solve_jacobian(J_single: Float[Array, "d d"]) -> Float[Array, "d d"]:
+        M = jnp.linalg.solve(J_single, I_d)
+        return M @ M.T
+
+    vmap_solve = jax.vmap(solve_jacobian)
+    MM_T = vmap_solve(J_T)  # (n, d, d)
+
+    inverse_cov = sigma_v_sq[:, None, None] * MM_T  # (n, d, d)
+    return z_hat, inverse_cov

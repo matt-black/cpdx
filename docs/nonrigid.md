@@ -36,6 +36,24 @@ In addition to `TransformParams`, `align` returns a tuple of the final variance 
         show_source: false
         show_root_heading: true
 
+::: cpdx.nonrigid.interpolate_variance
+    handler: python
+    options:
+        show_source: false
+        show_root_heading: true
+
+::: cpdx.nonrigid.interpolate_variance_inverse
+    handler: python
+    options:
+        show_source: false
+        show_root_heading: true
+
+::: cpdx.nonrigid.invert_gp_mapping
+    handler: python
+    options:
+        show_source: false
+        show_root_heading: true
+
 ::: cpdx.nonrigid.maximization
     handler: python
     options:
