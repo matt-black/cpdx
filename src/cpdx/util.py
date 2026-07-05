@@ -88,6 +88,63 @@ def _squared_distance(x: Float[Array, " d"], y: Float[Array, " d"]):
     return jnp.sum(jnp.square(jnp.subtract(x, y)))
 
 
+def _mahalanobis_pair(
+    x1: Float[Array, " d"],
+    unc_x1: Float[Array, " d"],
+    y1: Float[Array, " d"],
+    unc_y1: Float[Array, " d"],
+    var: Float[Array, ""],
+) -> tuple[Float[Array, ""], Float[Array, ""]]:
+    """Mahalanobis distance and log-determinant for a single point pair.
+
+    Args:
+        x1: Single target point (d,).
+        unc_x1: Per-dimension variance for the target point (d,).
+        y1: Single moving point (d,).
+        unc_y1: Per-dimension variance for the moving point (d,).
+        var: Current isotropic variance (scalar).
+
+    Returns:
+        Tuple of (Mahalanobis distance, log-determinant of covariance).
+    """
+    diff = x1 - y1  # (d,)
+    cov_diag = var + unc_x1 + unc_y1  # (d,) — diagonal covariance
+    mahal = jnp.sum(jnp.square(diff) / cov_diag)
+    log_det = jnp.sum(jnp.log(cov_diag))
+    return mahal, log_det
+
+
+def mahalanobis_dist(
+    x: Float[Array, "n d"],
+    unc_x: Float[Array, "n d"],
+    y: Float[Array, "m d"],
+    unc_y: Float[Array, "m d"],
+    var: Float[Array, ""],
+) -> tuple[Float[Array, "n m"], Float[Array, "n m"]]:
+    """Compute pairwise Mahalanobis distance and log-determinant.
+
+    Uses nested vmap (like :func:`sqdist`) to avoid materializing (n, m, d)
+    arrays, keeping memory usage at O(d) per pair.
+
+    Args:
+        x: Target points (n, d).
+        unc_x: Target per-point, per-dimension variances (n, d).
+        y: Moving points (m, d).
+        unc_y: Moving per-point, per-dimension variances (m, d).
+        var: Current isotropic variance (scalar).
+
+    Returns:
+        Tuple of:
+            - Pairwise Mahalanobis distances (n, m).
+            - Pairwise log-determinants of the diagonal covariance (n, m).
+    """
+    return jax.vmap(
+        lambda x1, ux1: jax.vmap(
+            lambda y1, uy1: _mahalanobis_pair(x1, ux1, y1, uy1, var)
+        )(y, unc_y)
+    )(x, unc_x)
+
+
 def decompose_affine_transform(
     A: Float[Array, "d d"],
 ) -> tuple[Float[Array, "d d"], Float[Array, " d"], Float[Array, " d"]]:

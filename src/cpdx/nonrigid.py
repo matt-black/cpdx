@@ -24,6 +24,7 @@ __all__ = [
     "interpolate_variance",
     "interpolate_variance_inverse",
     "maximization",
+    "maximization_uncertainty",
     "invert_gp_mapping",
 ]
 
@@ -43,6 +44,8 @@ def align(
     kernel_var: float,
     max_iter: int,
     tolerance: float,
+    unc_ref: Float[Array, "n d"] | None = None,
+    unc_mov: Float[Array, "m d"] | None = None,
     moving_weights: Float[Array, " m"] | None = None,
     mask: Float[Array, "m n"] | None = None,
 ) -> tuple[TransformParams, tuple[Float[Array, ""], int]]:
@@ -56,6 +59,10 @@ def align(
         kernel_var (float): variance of Gaussian kernel function.
         max_iter (int): maximum # of iterations to optimize for.
         tolerance (float): tolerance for matching variance, below which the algorithm will terminate.
+        unc_ref (Float[Array, "n d"] | None): optional per-point, per-dimension
+            variances for reference (target) points.
+        unc_mov (Float[Array, "m d"] | None): optional per-point, per-dimension
+            variances for moving points.
         moving_weights (Float[Array, " m"] | None): optional per-point weights for source points (arbitrary positive values). If None, uniform weights are used.
         mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
 
@@ -66,6 +73,7 @@ def align(
     n, d = ref.shape
     m, _ = mov.shape
     var_i = jnp.sum(sqdist(ref, mov)) / (m * n * d)
+    has_unc = unc_ref is not None and unc_mov is not None
 
     # compute gaussian kernel matrix
     G = jnp.exp(jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_var)))
@@ -88,18 +96,30 @@ def align(
     ]:
         (W, _), (var, iter_num) = a
         mov_t = transform(mov, G, W)
-        if moving_weights is None:
-            if mask is None:
-                P = expectation(ref, mov_t, var, outlier_prob)
-            else:
-                P = expectation_masked(ref, mov_t, var, outlier_prob, mask)
-        else:
-            P = expectation_weighted(
-                ref, mov_t, var, outlier_prob, moving_weights
+        if has_unc:
+            assert unc_ref is not None and unc_mov is not None
+            P = expectation(
+                ref, mov_t, var, outlier_prob,
+                moving_weights=moving_weights, mask=mask,
+                unc_x=unc_ref, unc_y=unc_mov,
             )
-        W, new_var = maximization(
-            ref, mov, P, G, var, regularization_param, tolerance
-        )
+            W, new_var = maximization_uncertainty(
+                ref, mov, P, G, var, regularization_param, tolerance,
+                unc_ref, unc_mov,
+            )
+        else:
+            if moving_weights is None:
+                if mask is None:
+                    P = expectation(ref, mov_t, var, outlier_prob)
+                else:
+                    P = expectation_masked(ref, mov_t, var, outlier_prob, mask)
+            else:
+                P = expectation_weighted(
+                    ref, mov_t, var, outlier_prob, moving_weights
+                )
+            W, new_var = maximization(
+                ref, mov, P, G, var, regularization_param, tolerance
+            )
         return ((W, P), (new_var, iter_num + 1))
 
     (W, P), (var_f, num_iter) = jax.lax.while_loop(
@@ -117,6 +137,8 @@ def align_fixed_iter(
     regularization_param: float,
     kernel_var: float,
     num_iter: int,
+    unc_ref: Float[Array, "n d"] | None = None,
+    unc_mov: Float[Array, "m d"] | None = None,
     moving_weights: Float[Array, " m"] | None = None,
     mask: Float[Array, "m n"] | None = None,
 ) -> tuple[TransformParams, Float[Array, " {num_iter}"]]:
@@ -129,6 +151,10 @@ def align_fixed_iter(
         regularization_param (float): regularization parameter (usually termed "lambda" in the literature) for motion coherence.
         kernel_var (float): variance of Gaussian kernel function.
         num_iter (int): # of iterations to optimize for.
+        unc_ref (Float[Array, "n d"] | None): optional per-point, per-dimension
+            variances for reference (target) points.
+        unc_mov (Float[Array, "m d"] | None): optional per-point, per-dimension
+            variances for moving points.
         moving_weights (Float[Array, " m"] | None): optional per-point weights for source points (arbitrary positive values). If None, uniform weights are used.
         mask (Float[Array, "m n"] | None): optional mask matrix where nonzero entries indicate valid matches.
 
@@ -140,6 +166,7 @@ def align_fixed_iter(
     # compute gaussian kernel
     G = jnp.exp(jnp.negative(jnp.divide(sqdist(mov, mov), 2 * kernel_var)))
     var_i = (jnp.sum(sqdist(ref, mov)) / (m * n * d)).item()
+    has_unc = unc_ref is not None and unc_mov is not None
 
     def scan_fun(
         a: tuple[tuple[MatchingMatrix, CoeffMatrix], Float[Array, ""]],
@@ -147,18 +174,30 @@ def align_fixed_iter(
     ):
         (_, W), var = a
         mov_t = transform(mov, G, W)
-        if moving_weights is None:
-            if mask is None:
-                P = expectation(ref, mov_t, var, outlier_prob)
-            else:
-                P = expectation_masked(ref, mov_t, var, outlier_prob, mask)
-        else:
-            P = expectation_weighted(
-                ref, mov_t, var, outlier_prob, moving_weights
+        if has_unc:
+            assert unc_ref is not None and unc_mov is not None
+            P = expectation(
+                ref, mov_t, var, outlier_prob,
+                moving_weights=moving_weights, mask=mask,
+                unc_x=unc_ref, unc_y=unc_mov,
             )
-        W, new_var = maximization(
-            ref, mov, P, G, var, regularization_param, 1e-6
-        )
+            W, new_var = maximization_uncertainty(
+                ref, mov, P, G, var, regularization_param, 1e-6,
+                unc_ref, unc_mov,
+            )
+        else:
+            if moving_weights is None:
+                if mask is None:
+                    P = expectation(ref, mov_t, var, outlier_prob)
+                else:
+                    P = expectation_masked(ref, mov_t, var, outlier_prob, mask)
+            else:
+                P = expectation_weighted(
+                    ref, mov_t, var, outlier_prob, moving_weights
+                )
+            W, new_var = maximization(
+                ref, mov, P, G, var, regularization_param, 1e-6
+            )
         return ((P, W), new_var), new_var
 
     ((P, W), _), varz = jax.lax.scan(
@@ -231,6 +270,129 @@ def update_transform(
     A = jnp.diag(P1) @ G + regularization_param * var * jnp.eye(m)
     B = jnp.matmul(P, x) - jnp.diag(P1) @ y
     return jnp.linalg.solve(A, B)
+
+
+def update_transform_uncertainty(
+    x: Float[Array, "n d"],
+    y: Float[Array, "m d"],
+    P: Float[Array, "m n"],
+    G: KernelMatrix,
+    var: Float[Array, ""],
+    regularization_param: float,
+    unc_x: Float[Array, "n d"],
+    unc_y: Float[Array, "m d"],
+) -> CoeffMatrix:
+    """Per-dimension weighted GP solve with uncertainty.
+
+    For each output dimension k, solves a weighted linear system with
+    effective weights w_{mn}^{(k)} = P_{mn} / (var + unc_x[n,k] + unc_y[m,k]).
+
+    Uses vmap over dimensions (consistent with affine.py pattern).
+
+    Args:
+        x: Target point set (n, d).
+        y: Source point set (m, d).
+        P: Matching matrix (m, n).
+        G: Kernel matrix (m, m).
+        var: Current isotropic variance.
+        regularization_param: Regularization parameter lambda.
+        unc_x: Target per-point, per-dimension variances (n, d).
+        unc_y: Moving per-point, per-dimension variances (m, d).
+
+    Returns:
+        CoeffMatrix: Fitted coefficient matrix (m, d).
+    """
+    m, _ = P.shape
+    _, d = x.shape
+
+    # Per-dimension covariance: cov[m, n, k] = var + unc_x[n, k] + unc_y[m, k]
+    cov_diag = var + unc_x[None, :, :] + unc_y[:, None, :]  # (m, n, d)
+    # Weighted matching: w[m, n, k] = P[m, n] / cov[m, n, k]
+    w_mnk = P[:, :, None] / cov_diag  # (m, n, d)
+
+    def _solve_dimension(k):
+        """Solve weighted linear system for output dimension k."""
+        w_mn = w_mnk[:, :, k]           # (m, n)
+        P1_k = jnp.sum(w_mn, axis=1)    # (m,)
+        A = jnp.diag(P1_k) @ G + regularization_param * jnp.eye(m)  # (m, m)
+        rhs = jnp.sum(w_mn * x[:, k], axis=1) - P1_k * y[:, k]           # (m,)
+        return jnp.linalg.solve(A, rhs)  # (m,)
+
+    # vmap over dimensions to get W[:, k] for each k
+    W = jax.vmap(_solve_dimension)(jnp.arange(d))  # (d, m)
+    return W.T  # (m, d)
+
+
+def update_variance_uncertainty(
+    x: Float[Array, "n d"],
+    y_t: Float[Array, "m d"],
+    P: MatchingMatrix,
+    tolerance: float,
+    unc_x: Float[Array, "n d"],
+    unc_y: Float[Array, "m d"],
+) -> Float[Array, ""]:
+    """Compute variance from residuals, subtracting uncertainty traces.
+
+    σ²_new = max(ε, (1/(d·N_P)) · Σ P_{mn} · (||y_n - T(x_m)||² - tr(Σ_n) - tr(Γ_m)))
+
+    Args:
+        x: Target point set (n, d).
+        y_t: Transformed moving points (m, d).
+        P: Matching matrix (m, n).
+        tolerance: Termination tolerance (used as floor).
+        unc_x: Target per-point, per-dimension variances (n, d).
+        unc_y: Moving per-point, per-dimension variances (m, d).
+
+    Returns:
+        Float[Array, ""]: Updated variance.
+    """
+    _, d = x.shape
+    N = jnp.sum(P)
+
+    # Squared residuals: ||x[n] - y_t[m]||², shape (m, n)
+    residuals_sq = sqdist(x, y_t).T  # (m, n)
+
+    # Trace of uncertainty per pair: sum_k(unc_x[n,k]) + sum_k(unc_y[m,k])
+    trace_sum = jnp.sum(unc_y, axis=1)[:, None] + jnp.sum(unc_x, axis=1)[None, :]  # (m, n)
+
+    new_var = jnp.sum(P * (residuals_sq - trace_sum)) / (N * d)
+    return jax.lax.select(new_var > 0, new_var, tolerance / 10.0)
+
+
+def maximization_uncertainty(
+    x: Float[Array, "n d"],
+    y: Float[Array, "m d"],
+    P: Float[Array, "m n"],
+    G: KernelMatrix,
+    var: Float[Array, ""],
+    regularization_param: float,
+    tolerance: float,
+    unc_x: Float[Array, "n d"],
+    unc_y: Float[Array, "m d"],
+) -> tuple[CoeffMatrix, Float[Array, ""]]:
+    """Do a single M-step with per-point diagonal uncertainties.
+
+    Uses per-dimension weighted GP solve for the transformation coefficients
+    and residual-based variance computation with uncertainty trace subtraction.
+
+    Args:
+        x: Target point set (n, d).
+        y: Source point set (m, d).
+        P: Matching matrix (m, n).
+        G: Kernel matrix (m, m).
+        var: Current isotropic variance.
+        regularization_param: Regularization parameter lambda.
+        tolerance: Termination tolerance.
+        unc_x: Target per-point, per-dimension variances (n, d).
+        unc_y: Moving per-point, per-dimension variances (m, d).
+
+    Returns:
+        tuple[CoeffMatrix, Float[Array, ""]]: Updated coefficient matrix and variance.
+    """
+    W = update_transform_uncertainty(x, y, P, G, var, regularization_param, unc_x, unc_y)
+    y_t = transform(y, G, W)
+    new_var = update_variance_uncertainty(x, y_t, P, tolerance, unc_x, unc_y)
+    return W, new_var
 
 
 def update_variance(
