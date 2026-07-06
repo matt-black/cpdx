@@ -21,10 +21,14 @@ from .nonrigid import align_fixed_iter as align_fixed_iter_nonrigid
 from .rigid import TransformParams as RigidTransformParams
 from .rigid import align as align_rigid
 from .rigid import align_fixed_iter as align_fixed_iter_rigid
+from .rnr import TransformParams as RnrTransformParams
+from .rnr import align as align_rnr
+from .rnr import align_fixed_iter as align_fixed_iter_rnr
 
 
 type TransformParams = Union[
-    RigidTransformParams, AffineTransformParams, CoherentMotionTransformParams
+    RigidTransformParams, AffineTransformParams, CoherentMotionTransformParams,
+    RnrTransformParams,
 ]
 
 
@@ -33,6 +37,7 @@ __all__ = [
     "align_rigid",
     "align_affine",
     "align_nonrigid",
+    "align_rnr",
 ]
 
 
