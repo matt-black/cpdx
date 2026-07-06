@@ -66,6 +66,7 @@ def align(
     debias: bool = False,
     return_weights: bool = False,
     mask: Float[Array, "m n"] | None = None,
+    burn_in: int = 0,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -93,6 +94,12 @@ def align(
         mask (Float[Array, "m n"] | None): optional mask of shape `(m, n)` where nonzero entries indicate valid
             (source_m, target_n) pairs. Zero entries are treated as impossible matches and excluded from the
             E-step. If `None` (default), all pairs are considered valid.
+        burn_in (int): number of initial iterations to run with rigid-only registration
+            before enabling non-rigid deformation. Only effective when `transform_mode="both"`.
+            During burn-in, the algorithm estimates a good rigid alignment (R, s, t) with
+            zero non-rigid displacement, then transitions to full rigid+nonrigid optimization.
+            `num_iter` represents total iterations, so the second phase gets `num_iter - burn_in`
+            iterations. Defaults to 0 (no burn-in).
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -108,6 +115,10 @@ def align(
             f"transform_mode must be 'both', 'rigid', or 'nonrigid', got '{transform_mode}'"
         )
 
+    # Validate burn_in
+    if burn_in < 0:
+        raise ValueError(f"burn_in must be >= 0, got {burn_in}")
+
     # Input Normalization
     if normalize_input:
         ref_norm, mu_x, sigma_x = normalize_points(ref)
@@ -116,12 +127,94 @@ def align(
         ref_norm, mov_norm = ref, mov
         mu_x, mu_y, sigma_x, sigma_y = 0, 0, 0, 0
 
+    # Initialize G and alpha_m once (used by both burn-in and non-burn-in paths)
     G, alpha_m, sigma_m, var_i = initialize(
         ref_norm, mov_norm, kernel, kernel_beta, gamma
     )
-
     if fixed_alpha is not None:
         alpha_m = fixed_alpha
+
+    # Burn-in two-phase strategy: when burn_in > 0 and transform_mode == "both",
+    # run a rigid-only phase first, then continue with full optimization.
+    if burn_in > 0 and transform_mode == "both":
+        if burn_in >= num_iter:
+            raise ValueError(
+                f"burn_in ({burn_in}) must be less than num_iter ({num_iter})"
+            )
+
+        m, _ = mov_norm.shape
+
+        # Phase 1: Rigid-only burn-in (always fixed iterations)
+        (P1, R, s, t, _), var1_result = align_with_ic(
+            ref_norm, mov_norm,
+            outlier_prob, burn_in, None,  # tolerance=None for fixed iterations
+            lambda_param, kappa,
+            G, jnp.eye(d), jnp.array(1.0), jnp.zeros(d), jnp.zeros_like(mov_norm),
+            jnp.zeros_like(sigma_m),  # sigma_m=0 for rigid
+            alpha_m, var_i,
+            fixed_alpha=fixed_alpha,
+            transform_mode="rigid",
+            normalize_input=False,
+            debias=debias,
+            return_weights=False,
+            mask=mask,
+            burn_in=0,  # Prevent infinite recursion
+        )
+        # var1_result is Float[Array, "{burn_in}"] because tolerance=None
+        var1 = var1_result  # type: ignore[assignment]
+
+        # Phase 2: Full rigid + nonrigid from rigid results
+        sigma_m_fresh = jnp.full((m,), 1e-4)
+        remaining_iter = num_iter - burn_in
+        var_last = jnp.array(float(var1[-1]))  # scalar variance from last burn-in step
+
+        if tolerance is None:
+            (P, R, s, t, v), var2_result = align_with_ic(
+                ref_norm, mov_norm,
+                outlier_prob, remaining_iter, None,
+                lambda_param, kappa,
+                G, R, s, t, jnp.zeros_like(mov_norm),
+                sigma_m_fresh, alpha_m, var_last,
+                fixed_alpha=fixed_alpha,
+                transform_mode="both",
+                normalize_input=False,
+                debias=debias,
+                return_weights=return_weights,
+                mask=mask,
+                burn_in=0,  # Prevent recursion
+            )
+            var2 = var2_result  # type: ignore[assignment]
+            var = jnp.concatenate([var1, var2])  # type: ignore[arg-type]
+        else:
+            (P, R, s, t, v), (var_final, iters) = align_with_ic(
+                ref_norm, mov_norm,
+                outlier_prob, remaining_iter, tolerance,
+                lambda_param, kappa,
+                G, R, s, t, jnp.zeros_like(mov_norm),
+                sigma_m_fresh, alpha_m, var_last,
+                fixed_alpha=fixed_alpha,
+                transform_mode="both",
+                normalize_input=False,
+                debias=debias,
+                return_weights=return_weights,
+                mask=mask,
+                burn_in=0,  # Prevent recursion
+            )
+            var = (var_final, burn_in + iters)
+
+        # Denormalize if needed
+        if normalize_input:
+            R, s, t, v = denormalize_parameters(
+                R, s, t, v,
+                mu_y,  # pyright: ignore[reportArgumentType]
+                sigma_y,  # pyright: ignore[reportArgumentType]
+                mu_x,  # pyright: ignore[reportArgumentType]
+                sigma_x,  # pyright: ignore[reportArgumentType]
+            )
+        return (P, R, s, t, v), var
+
+    # No burn-in or non-"both" mode: existing behavior
+    # (G, alpha_m, sigma_m, var_i already initialized above)
 
     # If transform_mode is rigid, force sigma_m to 0 (no deformation uncertainty)
     if transform_mode == "rigid":
@@ -218,6 +311,7 @@ def align_with_ic(
     debias: bool = False,
     return_weights: bool = False,
     mask: Float[Array, "m n"] | None = None,
+    burn_in: int = 0,
 ) -> tuple[
     TransformParams,
     Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]],
@@ -248,6 +342,12 @@ def align_with_ic(
         mask (Float[Array, "m n"] | None): optional mask of shape `(m, n)` where nonzero entries indicate valid
             (source_m, target_n) pairs. Zero entries are treated as impossible matches and excluded from the
             E-step. If `None` (default), all pairs are considered valid.
+        burn_in (int): number of initial iterations to run with rigid-only registration
+            before enabling non-rigid deformation. Only effective when `transform_mode="both"`.
+            During burn-in, the algorithm estimates a good rigid alignment (R, s, t) with
+            zero non-rigid displacement, then transitions to full rigid+nonrigid optimization.
+            `num_iter` represents total iterations, so the second phase gets `num_iter - burn_in`
+            iterations. Defaults to 0 (no burn-in).
 
     Returns:
         tuple[TransformParams, Union[Float[Array, " {num_iter}"], tuple[Float[Array, ""], int]]: the fitted transform parameters (the matching matrix, the rigid transform parameters, and the learned vector field) along with a tuple describing the optimization. If `tolerance=None`, a vector of variances at each step of the iteration is returned. Otherwise, the final variance and the number of iterations the algorithm was run for is returned.
@@ -261,17 +361,101 @@ def align_with_ic(
             f"transform_mode must be 'both', 'rigid', or 'nonrigid', got '{transform_mode}'"
         )
 
+    # Validate burn_in
+    if burn_in < 0:
+        raise ValueError(f"burn_in must be >= 0, got {burn_in}")
+
     # Input Normalization
     if normalize_input:
         ref_norm, mu_x, sigma_x = normalize_points(ref)
         mov_norm, mu_y, sigma_y = normalize_points(mov)
     else:
         ref_norm, mov_norm = ref, mov
+        mu_x, mu_y, sigma_x, sigma_y = 0, 0, 0, 0
 
     # Use fixed_alpha if provided
     if fixed_alpha is not None:
         alpha_m = fixed_alpha
 
+    # Burn-in two-phase strategy
+    if burn_in > 0 and transform_mode == "both":
+        if burn_in >= num_iter:
+            raise ValueError(
+                f"burn_in ({burn_in}) must be less than num_iter ({num_iter})"
+            )
+
+        m, _ = mov_norm.shape
+
+        # Phase 1: Rigid-only burn-in (always fixed iterations)
+        (P1, R1, s1, t1, _), var1_result = align_with_ic(
+            ref_norm, mov_norm,
+            outlier_prob, burn_in, None,  # tolerance=None for fixed iterations
+            lambda_param, kappa,
+            G, R, s, t, v,
+            jnp.zeros_like(sigma_m),  # sigma_m=0 for rigid
+            alpha_m, var_i,
+            fixed_alpha=fixed_alpha,
+            transform_mode="rigid",
+            normalize_input=False,
+            debias=debias,
+            return_weights=False,
+            mask=mask,
+            burn_in=0,  # Prevent recursion
+        )
+        var1 = var1_result  # type: ignore[assignment]
+
+        # Phase 2: Full rigid + nonrigid from rigid results
+        sigma_m_fresh = jnp.full((m,), 1e-4)
+        remaining_iter = num_iter - burn_in
+        var_last = jnp.array(float(var1[-1]))
+
+        if tolerance is None:
+            (P, R2, s2, t2, v2), var2_result = align_with_ic(
+                ref_norm, mov_norm,
+                outlier_prob, remaining_iter, None,
+                lambda_param, kappa,
+                G, R1, s1, t1, jnp.zeros((m, mov_norm.shape[1])),
+                sigma_m_fresh, alpha_m, var_last,
+                fixed_alpha=fixed_alpha,
+                transform_mode="both",
+                normalize_input=False,
+                debias=debias,
+                return_weights=return_weights,
+                mask=mask,
+                burn_in=0,
+            )
+            var2 = var2_result  # type: ignore[assignment]
+            var = jnp.concatenate([var1, var2])  # type: ignore[arg-type]
+            R, s, t, v = R2, s2, t2, v2
+        else:
+            (P, R, s, t, v), (var_final, iters) = align_with_ic(
+                ref_norm, mov_norm,
+                outlier_prob, remaining_iter, tolerance,
+                lambda_param, kappa,
+                G, R1, s1, t1, jnp.zeros((m, mov_norm.shape[1])),
+                sigma_m_fresh, alpha_m, var_last,
+                fixed_alpha=fixed_alpha,
+                transform_mode="both",
+                normalize_input=False,
+                debias=debias,
+                return_weights=return_weights,
+                mask=mask,
+                burn_in=0,
+            )
+            var = (var_final, burn_in + iters)
+
+        # Denormalize if needed
+        if normalize_input:
+            R, s, t, v = denormalize_parameters(
+                R, s, t, v,
+                mu_y,  # pyright: ignore[reportArgumentType]
+                sigma_y,  # pyright: ignore[reportArgumentType]
+                mu_x,  # pyright: ignore[reportArgumentType]
+                sigma_x,  # pyright: ignore[reportArgumentType]
+            )
+        return (P, R, s, t, v), var
+
+    # No burn-in or non-"both" mode: existing behavior
     if tolerance is not None:
         (P, R, s, t, v), var = _align_tolerance(
             ref_norm,
@@ -325,10 +509,10 @@ def align_with_ic(
             s,
             t,
             v,
-            mu_y,  # pyright: ignore[reportPossiblyUnboundVariable]
-            sigma_y,  # pyright: ignore[reportPossiblyUnboundVariable]
-            mu_x,  # pyright: ignore[reportPossiblyUnboundVariable]
-            sigma_x,  # pyright: ignore[reportPossiblyUnboundVariable]
+            mu_y,  # pyright: ignore[reportArgumentType]
+            sigma_y,  # pyright: ignore[reportArgumentType]
+            mu_x,  # pyright: ignore[reportArgumentType]
+            sigma_x,  # pyright: ignore[reportArgumentType]
         )
 
     return (P, R, s, t, v), var

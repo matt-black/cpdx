@@ -103,7 +103,7 @@ def transform(
         Float[Array, "n d"]: transformed points
 
     Notes:
-        To apply the full BCPD transform, add the `VectorField` output to the points to transform before passing them into this function.
+        To apply the full BCPD transform, add the `VectorField` (either `v_hat` or `G @ W`) output to the points to transform before passing them into this function.
     """
     return s * (x @ R.T) + t
 

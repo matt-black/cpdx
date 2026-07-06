@@ -12,7 +12,7 @@ The `TransformParams` object returned by `align` and `align_with_ic` is a `tuple
 4. `Translation`, a `d`-length vector representing the translation. Note that this translation is at the scale of the reference point set (in the forward transform, it is applied *after* scaling).
 5. `VectorField`, a matrix of shape `(m,d)` containing the displacement vectors for each point in the moving point set.
 
-The `align` and `align_with_ic` functions also support additional parameters for more complex workflows, such as `fixed_alpha` for fixed mixing coefficients, `transform_mode` to restrict updates to rigid or nonrigid components, `normalize_input` for automatic data scaling, and `return_weights` to return GP weights instead of displacement vectors.
+The `align` and `align_with_ic` functions also support additional parameters for more complex workflows, such as `fixed_alpha` for fixed mixing coefficients, `transform_mode` to restrict updates to rigid or nonrigid components, `normalize_input` for automatic data scaling, `return_weights` to return GP weights instead of displacement vectors, and `burn_in` to run an initial rigid-only registration phase before enabling nonrigid deformation.
 
 ::: cpdx.bayes.align
     handler: python
